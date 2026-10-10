@@ -13,9 +13,9 @@
 
 ## 3. The agent window
 
-- [ ] 3.1 The agent's own `Window` (own context, fonts installed) driven over the live `App` inside the pump, through the same `Window::run` the checks use; check: a test alternates live frames and agent frames on one `App` with `check_all`-style invariants after every step, and both windows stay coherent
-- [ ] 3.2 Choosers never: a pump slice that finds `asking_for_a_file` after an agent gesture answers the call with "the program is asking the person" and changes nothing; check: a test drives a gesture that would open a chooser and reads the answer
-- [ ] 3.3 Agent file operations take a path and call the io-job functions directly (the door a chooser's answer runs through); check: open, save and export each round-trip a real file with no chooser, in a test
+- [x] 3.1 The agent's own `Window` (own context, fonts installed) driven over the live `App` inside the pump, through the same `Window::run` the checks use; check: a test alternates live frames and agent frames on one `App` with `check_all`-style invariants after every step, and both windows stay coherent
+- [x] 3.2 Choosers never: a pump slice that finds `asking_for_a_file` after an agent gesture answers the call with "the program is asking the person" and changes nothing; check: a test drives a gesture that would open a chooser and reads the answer
+- [x] 3.3 Agent file operations take a path and call the io-job functions directly (the door a chooser's answer runs through); check: open, save and export each round-trip a real file with no chooser, in a test
 
 ## 4. The server crate and the discovery set
 

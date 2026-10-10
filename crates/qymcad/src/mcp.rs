@@ -8,6 +8,7 @@
 use std::collections::VecDeque;
 use std::sync::mpsc::Sender;
 use std::sync::Mutex;
+use std::time::Duration;
 
 use crate::gui::session::AgentSession;
 use crate::gui::App;
@@ -17,20 +18,38 @@ use crate::gui::App;
 /// the call again, and the person's window keeps its frames coming meanwhile.
 pub(crate) type Work = dyn FnMut(&mut AgentSession) -> bool + Send;
 
+/// ONE SLICE OF THE AGENT'S WORK to a live frame: a few milliseconds of the agent's frames, so the person's
+/// window is never held still for the agent's sake.
+pub(crate) const SLICE: Duration = Duration::from_millis(5);
+
+/// HOW A CALL OF THE AGENT ENDED, as the one who asked reads it.
+#[derive(Debug)]
+pub(crate) enum Ended {
+    /// The work ran whole.
+    Done,
+    /// THE PROGRAM IS ASKING THE PERSON: a gesture of the agent raised a chooser, and the person's answer is
+    /// the only one - the agent never answers a chooser. The chooser stands open; nothing was changed by the
+    /// call.
+    Asking,
+}
+
 /// ONE CALL OF THE AGENT: the work it asks of the program, and where its answer lands once the work has run.
 struct Call {
     /// The work, run on the frame thread over the driving core, a slice to a live frame.
     work: Box<Work>,
-    /// Told once the work has run: the answer door of whoever asked.
-    answer: Sender<()>,
+    /// Told how the work ended: the answer door of whoever asked.
+    answer: Sender<Ended>,
 }
 
-/// A CALL HALF-RUN: the hands its slices share - the agent's own window, the state of its gestures - and the
-/// work still to do. The program itself belongs to the frame and is lent anew by each slice.
+/// A CALL HALF-RUN: the hands its slices share - the agent's own window, the state of its gestures - the
+/// work still to do, and whether only the wait for rest is left. The program itself belongs to the frame
+/// and is lent anew by each slice.
 struct Running {
     hands: crate::gui::session::Hands,
     work: Box<Work>,
-    answer: Sender<()>,
+    answer: Sender<Ended>,
+    /// The work has run whole; only the wait for the program to come to rest is left.
+    settling: bool,
 }
 
 /// THE CALLS WAITING for a frame of the program to take them, oldest first.
@@ -61,7 +80,7 @@ static WAKE: Mutex<Option<egui::Context>> = Mutex::new(None);
 /// frame, and its answer comes back from there. The live window is woken for it. The server thread's door;
 /// until the server lands, the checks drive it.
 #[cfg(test)]
-pub(crate) fn hand_over(work: Box<Work>, answer: Sender<()>) {
+pub(crate) fn hand_over(work: Box<Work>, answer: Sender<Ended>) {
     if let Ok(mut waiting) = WAITING.lock() {
         waiting.push_back(Call { work, answer });
     }
@@ -94,22 +113,32 @@ pub(crate) fn pump(app: &mut App, ctx: &egui::Context) {
     if the_person_holds_it(app, ctx) {
         return;
     }
-    let (mut work, answer, mut core) = match RUNNING.lock().ok().and_then(|mut running| running.take()) {
-        Some(running) => (running.work, running.answer, AgentSession::with_hands(running.hands, app)),
+    let (mut work, answer, settling, mut core) = match RUNNING.lock().ok().and_then(|mut running| running.take()) {
+        Some(running) => (running.work, running.answer, running.settling, AgentSession::with_hands(running.hands, app)),
         None => {
             let Some(call) = WAITING.lock().ok().and_then(|mut waiting| waiting.pop_front()) else { return };
-            (call.work, call.answer, AgentSession::over(app, window_size(ctx)))
+            (call.work, call.answer, false, AgentSession::over(app, window_size(ctx)))
         }
     };
     AT_WORK.store(true, std::sync::atomic::Ordering::Relaxed);
-    let done = work(&mut core);
+    let done = settling || work(&mut core);
+    // THE ANSWER COMES FROM REST: the work may have ended mid-motion, and what it asked of the menus lands
+    // a frame later - the program is waited out before anything is answered, a slice to a frame.
+    let quiet = done && core.settle_for(SLICE);
     let hands = core.hands();
-    if done {
+    // THE AGENT NEVER ANSWERS A CHOOSER: a gesture of its raised one, and the person's answer is the only
+    // one. The call is answered so, the chooser stands open, and nothing is changed by the call.
+    if done && quiet && app.asking_for_a_file() {
         AT_WORK.store(false, std::sync::atomic::Ordering::Relaxed);
-        let _ = answer.send(());
+        let _ = answer.send(Ended::Asking);
+        return;
+    }
+    if done && quiet {
+        AT_WORK.store(false, std::sync::atomic::Ordering::Relaxed);
+        let _ = answer.send(Ended::Done);
     } else {
         if let Ok(mut held) = RUNNING.lock() {
-            *held = Some(Running { hands, work, answer });
+            *held = Some(Running { hands, work, answer, settling: done });
         }
         ctx.request_repaint();
     }
@@ -127,17 +156,33 @@ pub(crate) fn take_your_turn() -> std::sync::MutexGuard<'static, ()> {
 mod tests {
     use super::*;
 
-    /// THE PUMP TAKES A CALL IN ONE FRAME: what the queue holds is run by one call of the pump - the first
-    /// act of a live frame - and its answer comes back with nothing left waiting.
+    /// THE LIVE LOOP, as a check drives it: a frame at a time until the call is answered. A program fresh
+    /// from its default holds its greeting a few seconds, and the answer comes from rest - the frames run
+    /// until then, as the person's window would.
+    fn the_frames_answer_the_call(app: &mut App, ctx: &egui::Context, told: &std::sync::mpsc::Receiver<Ended>) -> Ended {
+        let began = std::time::Instant::now();
+        loop {
+            if let Ok(ended) = told.try_recv() {
+                return ended;
+            }
+            pump(app, ctx);
+            assert!(began.elapsed() < std::time::Duration::from_secs(20), "the call was never answered");
+        }
+    }
+
+    /// THE PUMP TAKES THE CALL AND ANSWERS FROM REST: what the queue holds is taken by the first call of
+    /// the pump - the first act of a live frame - the work runs, and the answer comes once the program has
+    /// come to rest, with nothing left waiting.
     #[test]
-    fn the_pump_takes_a_call_in_one_frame() {
+    fn the_pump_takes_the_call_and_answers_from_rest() {
         let _turn = take_your_turn();
         let mut app = App::default();
         let (answer, told) = std::sync::mpsc::channel();
         WAITING.lock().expect("the queue of the agent's calls is not poisoned").push_back(Call { work: Box::new(|_| true), answer });
         pump(&mut app, &egui::Context::default());
-        assert!(told.try_recv().is_ok(), "one call of the pump did not run the waiting call");
+        assert!(matches!(the_frames_answer_the_call(&mut app, &egui::Context::default(), &told), Ended::Done), "the call was not answered as done");
         assert!(WAITING.lock().expect("the queue of the agent's calls is not poisoned").is_empty(), "the call was left waiting");
+        assert!(RUNNING.lock().expect("the call in the frame is not held by a poisoned lock").is_none(), "the call was left half-run");
     }
 
     /// THE PERSON'S BUTTON, down or up in a context of the live window's shape: a pass is begun and ended
@@ -163,9 +208,38 @@ mod tests {
         assert!(told.try_recv().is_err(), "the agent's call ran while the person was mid-drag");
         assert!(!WAITING.lock().expect("the queue of the agent's calls is not poisoned").is_empty(), "the call was dropped instead of waiting out the drag");
         the_person_s_button(false, &ctx);
-        pump(&mut app, &ctx);
-        assert!(told.try_recv().is_ok(), "the call did not resume once the person let go");
+        assert!(matches!(the_frames_answer_the_call(&mut app, &ctx, &told), Ended::Done), "the call did not resume once the person let go");
         assert!(WAITING.lock().expect("the queue of the agent's calls is not poisoned").is_empty(), "the call was left waiting after the release");
+    }
+
+    /// THE AGENT NEVER ANSWERS A CHOOSER: its gesture raised one - File, Save as - and the call is answered
+    /// with that instead, the chooser standing open for the person and nothing changed by the call.
+    #[test]
+    fn the_agent_never_answers_a_chooser() {
+        let _turn = take_your_turn();
+        // the check's machine stands in for the system: no chooser is put up, the question waits
+        crate::system::stand_in(true);
+        let mut app = App::default();
+        let ctx = egui::Context::default();
+        let (answer, told) = std::sync::mpsc::channel();
+        hand_over(
+            Box::new(|core| {
+                // the start screen goes with Esc, as a person puts it away, and then the menu: File, Save as -
+                // the one menu path whose chooser comes up at once
+                core.key(egui::Key::Escape);
+                core.menu(&[&core.word("menu-file"), &core.word("file-save-as")]);
+                true
+            }),
+            answer,
+        );
+        pump(&mut app, &ctx);
+        assert!(matches!(told.try_recv(), Ok(Ended::Asking)), "a gesture that raised a chooser must answer that the program is asking the person");
+        assert!(app.asking_for_a_file(), "the chooser stands for the person to answer");
+        // the person walks away from it: the slot is freed, as any answer frees it
+        if let Some(asked) = crate::system::with_stand_in(|s| s.asked.take()).flatten() {
+            let _ = asked.tx.send(None);
+        }
+        crate::system::stand_in(false);
     }
 
     /// THE WORDS OF THE CARD on a context of the live window's shape: a first pass lays the card out, the
@@ -204,8 +278,7 @@ mod tests {
         assert!(told.try_recv().is_err(), "the call of two slices answered after one");
         let words = the_words_of_the_card(&ctx);
         assert!(words.contains(&crate::i18n::tr("mcp-at-work")), "while a call runs the window does not say so: {words:?}");
-        pump(&mut app, &ctx);
-        assert!(told.try_recv().is_ok(), "the second slice did not answer the call");
+        assert!(matches!(the_frames_answer_the_call(&mut app, &ctx, &told), Ended::Done), "the second slice did not answer the call");
         let words = the_words_of_the_card(&ctx);
         assert!(!words.contains(&crate::i18n::tr("mcp-at-work")), "after the call answered the window still says the agent is at work: {words:?}");
     }

@@ -193,10 +193,7 @@ impl App {
     /// Save As (Ctrl+Shift+S): always ask for the path and the name.
     pub(super) fn save_project_as(&mut self) {
         self.ask_save_file(save_as_dialog(self.disk.project_path.as_deref()), |app, path| {
-            let path = path.to_string_lossy().into_owned();
-            crate::gui::set_project_path(&mut app.disk.project_path, &mut app.set, path.clone());
-            app.disk.io.saved_key = Some(qymcad_ui_state::edit_key(&app.draw_ctx())); // confirmed once the write actually succeeds
-            spawn_save(&mut app.disk.io, &mut app.live, &mut app.project, &mut app.regen, &mut app.status, path, false);
+            save_project_to(app, path.to_string_lossy().into_owned());
             // the write goes to the background
         });
     }
@@ -248,15 +245,8 @@ impl App {
     /// Exporting a target into an exact file - STEP or IGES (exact B-rep, live `Shape`s from the core, every
     /// body in the world frame of the assembly).
     pub(super) fn export_exact(&mut self, format: qymcad_kernel::ExactFormat, target: ExportTarget) {
-        ensure_brep(&mut self.rebuild_ctx()); // without a live B-rep the sort would count every body as B-rep-less and the file would come out empty
-                                              // the sort into "has a B-rep" and "has not" is done on the UI thread (self is needed)
-        let plan = self.export_plan(target); // the same sort STL uses
-        if plan.brep.is_empty() {
-            self.status = nothing_exact_to_write(format, &plan);
-            return;
-        }
+        let Some(job) = exact_export_job(self, format, target) else { return };
         let dialog = exact_dialog(format, &export_base_name(&self.project, &self.disk.project_path, target), export_folder(&self.disk));
-        let job = ExportJob { format, tree: export_tree_of(&self.project, format, target, &plan.brep), bodies: plan.brep.clone(), note: plan.note(true) };
         self.ask_save_file(dialog, move |app, path| {
             remember_export(&mut app.disk, &path);
             write_exact_to(&mut app.live, &mut app.project, &mut app.regen, &mut app.status, &path, &job)
@@ -990,6 +980,28 @@ fn write_drawing(edges: &[qymcad_core::geom::ProfEdge], path: &std::path::Path, 
         Ok(()) => format!("{} -> {}", drawing.name(), path.display()),
         Err(e) => crate::i18n::name(&e),
     }
+}
+
+/// WRITE THE PROJECT TO `path` - the door a Save chooser's answer runs through, taken directly: the path
+/// names the file, the write goes to the background, and the document keeps the path as its own.
+pub(crate) fn save_project_to(app: &mut App, path: String) {
+    crate::gui::set_project_path(&mut app.disk.project_path, &mut app.set, path.clone());
+    app.disk.io.saved_key = Some(qymcad_ui_state::edit_key(&app.draw_ctx())); // confirmed once the write actually succeeds
+    spawn_save(&mut app.disk.io, &mut app.live, &mut app.project, &mut app.regen, &mut app.status, path, false);
+}
+
+/// THE EXPORT JOB FOR A TARGET - the B-rep brought up to date, the sort of the bodies, the tree of the file -
+/// or `None` with the status saying why nothing can be written: the shared half of the chooser's answer and
+/// of a direct export, so the two cannot come to disagree about what a file holds.
+pub(crate) fn exact_export_job(app: &mut App, format: qymcad_kernel::ExactFormat, target: ExportTarget) -> Option<ExportJob> {
+    ensure_brep(&mut app.rebuild_ctx()); // without a live B-rep the sort would count every body as B-rep-less and the file would come out empty
+                                         // the sort into "has a B-rep" and "has not" is done on the UI thread (self is needed)
+    let plan = app.export_plan(target); // the same sort STL uses
+    if plan.brep.is_empty() {
+        app.status = nothing_exact_to_write(format, &plan);
+        return None;
+    }
+    Some(ExportJob { format, tree: export_tree_of(&app.project, format, target, &plan.brep), bodies: plan.brep.clone(), note: plan.note(true) })
 }
 
 /// WHAT IS TO BE WRITTEN into an exact file: the format, the bodies, and the note on what was left out.

@@ -208,6 +208,28 @@ impl<'a> AgentSession<'a> {
         let AgentSession { app: _, win, budget, pointer, held, last_press, down, locale, watching } = self;
         Hands { win, budget, pointer, held, last_press, down, locale, watching }
     }
+
+    /// OPEN THE PROJECT AT `path`, as the answer to the open chooser does - the chooser never put up, the
+    /// path carried by the call itself. The load goes to the background; settle waits it out.
+    pub fn open(&mut self, path: &str) {
+        super::io_jobs::spawn_project_load(&mut self.app.regen, path.to_string());
+    }
+
+    /// SAVE THE PROJECT TO `path`, as the answer to the save chooser does - the chooser never put up, the
+    /// path carried by the call itself. The write goes to the background; settle waits it out, and the
+    /// document keeps the path as its own.
+    pub fn save(&mut self, path: &str) {
+        super::io_jobs::save_project_to(&mut self.app, path.to_string());
+    }
+
+    /// EXPORT THE WHOLE MODEL as a STEP file at `path`, as the answer to the export chooser does - the
+    /// chooser never put up, the path carried by the call itself. Nothing is written when no body holds a
+    /// B-rep: the status line says so, as it does for a person.
+    pub fn export_step(&mut self, path: &str) {
+        let Some(job) = super::io_jobs::exact_export_job(&mut self.app, qymcad_kernel::ExactFormat::Step, qymcad_ui_state::ExportTarget::Project) else { return };
+        let app = &mut *self.app;
+        super::io_jobs::write_exact_to(&mut app.live, &mut app.project, &mut app.regen, &mut app.status, std::path::Path::new(path), &job);
+    }
 }
 
 /// THE DOCUMENT AS THE PROGRAM HOLDS IT, read and never written: what a person could find out by looking at the

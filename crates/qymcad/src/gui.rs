@@ -3993,6 +3993,10 @@ mod a_corner_set_takes_its_size_whole;
 mod an_agent_session_rounds_a_corner_as_the_hand_does;
 /// A long settle through the pump keeps the live frames coming: `gui/a_long_settle_through_the_pump_keeps_the_live_frames.rs`.
 mod a_long_settle_through_the_pump_keeps_the_live_frames;
+/// The agent's frames and the person's stay coherent on one program: `gui/the_agent_s_frames_and_the_person_s_stay_coherent.rs`.
+mod the_agent_s_frames_and_the_person_s_stay_coherent;
+/// The agent's files go by path, no chooser put up: `gui/the_agent_s_files_go_by_path.rs`.
+mod the_agent_s_files_go_by_path;
 mod the_box_of_fillet_all_stands_at_the_clicked_side;
 mod every_field_of_a_pattern_bar_has_a_caption;
 mod the_x_key_turns_the_selection;
