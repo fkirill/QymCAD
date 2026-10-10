@@ -27,13 +27,17 @@ pub enum SettingsSection {
     /// WHERE THE PANELS STAND. A section of its own because it belongs to no workbench: the shell owns
     /// the places, and every workbench registers into the same ones.
     Layout,
+    /// THE AGENT'S SERVER: off unless the person switches it on. A section of its own because it is
+    /// neither a preference of the eye nor a way of working - it opens the document to a program on this
+    /// machine, and that is a decision a person makes knowingly.
+    Agent,
 }
 
 impl SettingsSection {
     /// All the sections in display order.
     pub fn all() -> &'static [Self] {
         use SettingsSection::*;
-        &[General, Appearance, Viewport, Sketch, Part, Assembly, Layout]
+        &[General, Appearance, Viewport, Sketch, Part, Assembly, Layout, Agent]
     }
 
     /// The catalogue key holding the section name.
@@ -47,6 +51,7 @@ impl SettingsSection {
             Part => "settings-sec-part",
             Assembly => "settings-sec-assembly",
             Layout => "settings-sec-layout",
+            Agent => "settings-sec-agent",
         }
     }
 
@@ -97,6 +102,7 @@ impl SettingsSection {
             Part => &["settings-default-extrude", "settings-default-offset"],
             Assembly => &["settings-show-contours", "settings-show-joints", "settings-show-interference"],
             Layout => &["settings-layout-place", "settings-layout-reset"],
+            Agent => &["settings-mcp-server", "settings-mcp-port", "settings-mcp-token"],
         }
     }
 
@@ -174,6 +180,7 @@ impl SettingsSection {
                 s.show_interference = d.show_interference;
             }
             Layout => s.layout = d.layout,
+            Agent => s.mcp = d.mcp,
         }
     }
 }

@@ -1483,6 +1483,36 @@ pub(crate) fn settings_section_body(wc: &mut qymcad_ui_state::WinCtx, ui: &mut e
                 wc.set.layout = sh.saved();
             }
         }
+        Sec::Agent => {
+            // THE AGENT'S SERVER. Off unless the person switches it on; the token is made on the first
+            // switch-on and kept, and a client without it is refused.
+            if show("settings-mcp-server") {
+                let switched = ui.checkbox(&mut wc.set.mcp.on, crate::i18n::tr("settings-mcp-server")).on_hover_text(crate::i18n::tr("settings-mcp-server-hint")).changed();
+                if switched && wc.set.mcp.on && wc.set.mcp.token.is_empty() {
+                    wc.set.mcp.token = qymcad_ui_state::McpSettings::a_fresh_token();
+                }
+            }
+            if show("settings-mcp-port") {
+                ui.horizontal(|ui| {
+                    ui.label(crate::i18n::tr("settings-mcp-port"));
+                    ui.add(egui::DragValue::new(&mut wc.set.mcp.port).range(1024..=65535));
+                });
+            }
+            if show("settings-mcp-token") {
+                ui.label(crate::i18n::tr("settings-mcp-token"));
+                ui.label(egui::RichText::new(crate::i18n::tr("settings-mcp-token-hint")).weak().small());
+                if wc.set.mcp.token.is_empty() {
+                    ui.label(egui::RichText::new(crate::i18n::tr("settings-mcp-token-none")).weak());
+                } else {
+                    ui.horizontal(|ui| {
+                        ui.monospace(&wc.set.mcp.token);
+                        if ui.small_button(format!("{}  {}", ph::COPY_SIMPLE, crate::i18n::tr("settings-mcp-copy"))).clicked() {
+                            ui.ctx().output_mut(|o| o.commands.push(egui::OutputCommand::CopyText(wc.set.mcp.token.clone())));
+                        }
+                    });
+                }
+            }
+        }
     }
 }
 

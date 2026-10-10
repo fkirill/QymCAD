@@ -1679,6 +1679,40 @@ pub struct Settings {
     /// Packs with live file watching enabled (specifically for directory packs).
     #[serde(default)]
     pub watched_icon_packs: Vec<String>,
+    /// THE AGENT'S SERVER. Off unless the person switches it on; while it is on, a program on this machine
+    /// can work on the open document as an agent does, and everything it does appears in the window.
+    pub mcp: McpSettings,
+}
+
+/// THE AGENT'S SERVER'S OWN SETTINGS.
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct McpSettings {
+    /// Is the server on.
+    pub on: bool,
+    /// THE PORT IT LISTENS ON, on the loopback interface only.
+    pub port: u16,
+    /// THE PAIRING TOKEN every request must carry. Empty until the server is first switched on, then made
+    /// once and kept - a client without it is refused, and nothing in the program changes.
+    pub token: String,
+}
+
+impl Default for McpSettings {
+    fn default() -> Self {
+        Self { on: false, port: 51888, token: String::new() }
+    }
+}
+
+impl McpSettings {
+    /// A FRESH PAIRING TOKEN: two OS-seeded hashes in hex. The token pairs this program with the client the
+    /// person copies it to; it is not a password against the machine it lives on (the settings file holds it
+    /// too) - it is the word a client must carry, so that nothing on the machine connects by accident.
+    pub fn a_fresh_token() -> String {
+        use std::hash::{BuildHasher, Hasher};
+        let one = std::collections::hash_map::RandomState::new().build_hasher().finish();
+        let two = std::collections::hash_map::RandomState::new().build_hasher().finish();
+        format!("{one:016x}{two:016x}")
+    }
 }
 
 fn default_orbit_about() -> OrbitAbout {
@@ -1779,6 +1813,7 @@ impl Default for Settings {
             inactive_icon_packs: Vec::new(),
             icon_dev_watch: false,
             watched_icon_packs: Vec::new(),
+            mcp: McpSettings::default(),
         }
     }
 }

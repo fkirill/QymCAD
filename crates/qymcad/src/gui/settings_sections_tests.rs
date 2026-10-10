@@ -110,6 +110,7 @@ mod tests {
             inactive_icon_packs: vec!["old-theme".into()],
             icon_dev_watch: true,
             watched_icon_packs: vec!["custom-theme".into()],
+            mcp: qymcad_ui_state::McpSettings { on: true, port: 4242, token: "changed".into() },
         }
     }
 
@@ -139,6 +140,7 @@ mod tests {
                     Sec::Part => assert_eq!(s.defaults.extrude_h, c.defaults.extrude_h, "{sec:?}: the reset touched the part"),
                     Sec::Assembly => assert_eq!(s.show_joints, c.show_joints, "{sec:?}: the reset touched the assembly"),
                     Sec::Layout => assert_eq!(s.layout, c.layout, "{sec:?}: the reset touched the panel layout"),
+                    Sec::Agent => assert_eq!(s.mcp.on, c.mcp.on, "{sec:?}: the reset touched the agent's server"),
                 }
             }
         }
@@ -166,6 +168,8 @@ mod tests {
         assert_eq!((pt.defaults.extrude_h, pt.defaults.offset_2d), (d.defaults.extrude_h, d.defaults.offset_2d));
         let asm = after(Sec::Assembly);
         assert_eq!((asm.show_contours, asm.show_joints, asm.show_interference), (d.show_contours, d.show_joints, d.show_interference));
+        let ag = after(Sec::Agent);
+        assert_eq!((ag.mcp.on, ag.mcp.port, &ag.mcp.token), (d.mcp.on, d.mcp.port, &d.mcp.token), "the agent's section must restore the server's factory state");
     }
 
     /// THE SECTIONS COVER EVERY SETTING WHOLE: resetting them all in turn gives exactly the factory

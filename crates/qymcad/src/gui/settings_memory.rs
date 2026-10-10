@@ -64,6 +64,7 @@ mod tests {
             inactive_icon_packs: vec!["old-theme".into()],
             icon_dev_watch: true,
             watched_icon_packs: vec!["custom-theme".into()],
+            mcp: qymcad_ui_state::McpSettings { on: !d.mcp.on, port: 4242, token: "kept-through-the-store".into() },
         }
     }
 
@@ -72,6 +73,7 @@ mod tests {
     fn assert_same(a: &Settings, b: &Settings) {
         assert_eq!(a.language, b.language, "the language of the interface");
         assert_eq!(a.import_ask_always, b.import_ask_always, "asking for units on every import");
+        assert_eq!((a.mcp.on, a.mcp.port, &a.mcp.token), (b.mcp.on, b.mcp.port, &b.mcp.token), "the agent's server");
         assert_eq!(a.import_units, b.import_units, "the unit last chosen for a format without units");
         assert_eq!(a.scheme, b.scheme, "the colour scheme");
         assert_eq!(a.viewcube_size, b.viewcube_size, "the size of the navigation cube");

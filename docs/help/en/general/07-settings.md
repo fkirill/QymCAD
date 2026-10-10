@@ -15,6 +15,8 @@ The settings window is split into sections; above them is a search that finds a 
 - **Part** — the default extrusion height and offset.
 - **Assembly** — showing sketch outlines, joint glyphs and the interference check.
 - **Layout** — where the panels stand: the tree, properties, the tool bars, the status line.
+- **Agent** — the agent's server: whether a program on this machine may work on the open document, on
+  which port, and the pairing token it must carry.
 
 Every section has **“Reset section”**: it restores the factory values in that section only, leaving
 the rest alone.
@@ -70,3 +72,17 @@ Only what you moved is remembered; everything else is taken as it comes, so a pa
 version turns up in its own place instead of going missing.
 
 If it comes out wrong, press **Restore the standard layout** and everything goes back.
+
+## The agent's server
+
+In the **Agent** section the agent's server is switched on and off. While it is on, a program on this
+machine - an AI agent - can work on the open document: draw, edit, measure, export. Everything it
+does appears in the window as you watch, can be undone with the usual Undo, and the window says so
+while a call of its runs.
+
+To let a client in, copy the **pairing token** into the client's settings: a request without the
+token is refused and nothing changes. The server listens on this machine only, on the port named in
+the section; if the port is taken by another program, name another.
+
+Switching the server on or off takes effect at once, without restarting. It is off unless you
+switch it on.
