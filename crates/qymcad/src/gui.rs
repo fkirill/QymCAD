@@ -1936,6 +1936,9 @@ impl eframe::App for App {
     /// the framework hands the root one in. The context is still wanted for windows, input and viewport
     /// commands, and it comes from the same place.
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // THE AGENT'S CALL IS TAKEN INTO THE FRAME before anything is drawn: its work runs in whole frames of
+        // the program, never between them.
+        crate::mcp::pump(self, ui.ctx());
         self.draw_frame(ui);
     }
 }
@@ -3984,6 +3987,8 @@ mod the_offset_takes_its_chain_either_way;
 mod the_mirror_picks_as_every_tool;
 mod the_dimensions_of_a_cut_corner_stand_outside;
 mod a_corner_set_takes_its_size_whole;
+/// The agent's core over a borrowed program rounds corners as the hand does: `gui/an_agent_session_rounds_a_corner_as_the_hand_does.rs`.
+mod an_agent_session_rounds_a_corner_as_the_hand_does;
 mod the_box_of_fillet_all_stands_at_the_clicked_side;
 mod every_field_of_a_pattern_bar_has_a_caption;
 mod the_x_key_turns_the_selection;

@@ -143,7 +143,7 @@ mod tests {
         // KEYED BY PATH, not by file name. Every workbench crate is a single `lib.rs`, so an exception
         // written as "lib.rs" would have quietly excused the Part, the sketcher and the assembly along with
         // the one file it was meant for.
-        const NOT_A_PANEL: [(&str, &str); 9] = [
+        const NOT_A_PANEL: [(&str, &str); 10] = [
             ("qymcad/src/gui/input.rs", "keyboard handling: it draws nothing, it only takes a frame's context to read keys from"),
             ("qymcad/src/gui/orbit_about.rs", "the centre of a turn of the view: it draws nothing, it only keeps the point of a turn in a frame's context memory"),
             ("qymcad-part/src/trial.rs", "the trial build of a command: it draws nothing, it only keeps its verdict in a frame's context memory"),
@@ -157,6 +157,7 @@ mod tests {
             ("qymcad-ui-state/src/icons/runtime.rs", "widgets for rendering icons into panels, reached through the panels that place them"),
             ("qymcad-ui-state/src/icons/manager.rs", "icon resolution and loader registration into egui::Context, not a panel"),
             ("qymcad-ui-state/src/icons/watcher.rs", "background directory watcher and polling thread, not a panel"),
+            ("qymcad/src/mcp.rs", "the agent's way in: it draws nothing, it only takes the live frame's context to wake the window and to size the agent's own"),
         ];
         // EVERY LIST IN THE FILE, not the four panel ones. What is asserted below is "no source check reads
         // this file at all", so the four panel lists are the wrong measure of it: `gui.rs` is read by

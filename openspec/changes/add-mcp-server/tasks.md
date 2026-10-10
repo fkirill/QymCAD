@@ -1,12 +1,12 @@
 ## 1. The borrowable driving core (the riskiest patch, first and alone)
 
 - [x] 1.1 Move `Session`'s gesture, pacing and read-out machinery into a core holding `&mut App` + `Window`, keeping `Session`'s public API byte-identical as a delegating owner; run the whole acceptance suite and `cargo test --workspace` green on the movement alone, in its own commit
-- [ ] 1.2 Expose the core publicly as `qymcad::AgentSession` (no stand-in, no own `App`), with its own doc-comment saying what it is for; check: a test in `qymcad` drives a `App::default()` through `AgentSession` the way `Hand` does and gets the same fillet the hand's own check gets
+- [x] 1.2 Expose the core publicly as `qymcad::AgentSession` (no stand-in, no own `App`), with its own doc-comment saying what it is for; check: a test in `qymcad` drives a `App::default()` through `AgentSession` the way `Hand` does and gets the same fillet the hand's own check gets
 - [ ] 1.3 Expose the command-catalogue data (codes, names, launches, workbenches) for derivation outside the crate; check: a test reads every catalogue entry through the new door
 
 ## 2. The queue and the pump (app side)
 
-- [ ] 2.1 Create `crates/qymcad/src/mcp.rs`: the process-static request queue (the `WATCH` precedent), `pub(crate) fn pump(&mut App, &egui::Context)`, and the single call line in `impl eframe::App for App::ui` before `draw_frame`; check: `god_object_ratchet` and `comment_ratchet` green, and a test pushes a no-op request and sees the pump take it in one frame
+- [x] 2.1 Create `crates/qymcad/src/mcp.rs`: the process-static request queue (the `WATCH` precedent), `pub(crate) fn pump(&mut App, &egui::Context)`, and the single call line in `impl eframe::App for App::ui` before `draw_frame`; check: `god_object_ratchet` and `comment_ratchet` green, and a test pushes a no-op request and sees the pump take it in one frame
 - [ ] 2.2 Deference in the pump: a pointer button held in the live context, a text field holding the keyboard, or a chooser open holds the queue; check: a test with the hand mid-drag sees a queued request wait and resume after the release
 - [ ] 2.3 Time slices: the pump runs agent frames under a millisecond budget per live frame and re-requests repaint until the call answers; check: a test runs a long settle through the pump while live frames keep being counted, and the live frame count never stalls
 - [ ] 2.4 The "agent at work" indicator: the overlay the rebuild card uses, in the agent's words, raised while a call runs; check: a scenario test reads the indicator's words come and go with a call

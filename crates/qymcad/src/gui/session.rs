@@ -88,16 +88,21 @@ static WATCH: std::sync::OnceLock<fn(&mut Session) -> Vec<String>> = std::sync::
 pub struct Session {
     /// THE DRIVING CORE: the program, the window and the hands, where every gesture, every wait and every
     /// read-out of the session runs.
-    core: AgentSession,
+    core: AgentSession<'static>,
     kept: Kept,
 }
 
-/// THE DRIVING CORE: the program, a window without a screen, and the hands that work them. A session owns one
-/// through the whole of its run; whatever else holds the program over a window of its own drives the same
-/// machinery, so no two drivers come to disagree about what a gesture is. What each gesture and read-out does
-/// is said where the session offers it; the core is what those methods run.
-pub(crate) struct AgentSession {
-    app: Box<App>,
+/// THE DRIVING CORE: the program, a window without a screen, and the hands that work them - every gesture,
+/// every wait and every read-out of a whole-frame run, the machinery [`Session`] offers a check.
+///
+/// An agent drives the person's live program through one: the program is borrowed, not owned - the window
+/// above it stays the person's, and the document, the undo history and the tool in hand are the one the
+/// person sees. What a session runs whole frames for, this runs the same way; what a session owns - a
+/// stand-in for the system's choosers, a program of its own - this has none. What each gesture and read-out
+/// does is said where the session offers it; the core is what those methods run.
+pub struct AgentSession<'a> {
+    /// THE PROGRAM DRIVEN: the core's own, or the person's live one borrowed for a call.
+    app: AppRef<'a>,
     win: Window,
     /// How long one wait for the program may take before the check fails with what is still running.
     budget: Duration,
@@ -114,6 +119,57 @@ pub(crate) struct AgentSession {
     locale: String,
     /// The watch is being run: what it does is not itself watched.
     watching: bool,
+}
+
+/// THE PROGRAM A CORE DRIVES: its own, or the person's live one borrowed for a call. Only a core that owns
+/// its program can stand as a session for the process's watch; one over the live program never does - the
+/// watch is of sessions, and the person's window is not one.
+enum AppRef<'a> {
+    /// The core's own program, held with the core for its whole life.
+    Owned(Box<App>),
+    /// THE PERSON'S LIVE PROGRAM, borrowed for one call: the window above it stays the person's.
+    Borrowed(&'a mut App),
+}
+
+impl std::ops::Deref for AppRef<'_> {
+    type Target = App;
+
+    fn deref(&self) -> &App {
+        match self {
+            AppRef::Owned(app) => app,
+            AppRef::Borrowed(app) => app,
+        }
+    }
+}
+
+impl std::ops::DerefMut for AppRef<'_> {
+    fn deref_mut(&mut self) -> &mut App {
+        match self {
+            AppRef::Owned(app) => app,
+            AppRef::Borrowed(app) => app,
+        }
+    }
+}
+
+impl<'a> AgentSession<'a> {
+    /// THE CORE OVER A PROGRAM NOT ITS OWN - the person's live one, borrowed for as long as the caller drives
+    /// it. The window is the core's own, without a screen, with the program's fonts in it; nothing is stood
+    /// in for the system, and nothing is started: what the program asks the system for stays asking.
+    pub(crate) fn over(app: &'a mut App, screen: Vec2) -> Self {
+        let win = Window::new(screen);
+        super::install_fonts(&win.ctx);
+        Self {
+            app: AppRef::Borrowed(app),
+            win,
+            budget: Duration::from_secs(120),
+            pointer: None,
+            held: Modifiers::default(),
+            last_press: f64::NEG_INFINITY,
+            down: Vec::new(),
+            locale: std::env::var("QYM_LOCALE").unwrap_or_else(|_| "en".into()),
+            watching: false,
+        }
+    }
 }
 
 /// THE DOCUMENT AS THE PROGRAM HOLDS IT, read and never written: what a person could find out by looking at the
@@ -405,7 +461,7 @@ pub enum SketchPick {
     Spline { nodes: Vec<(f64, f64)> },
 }
 
-impl AgentSession {
+impl AgentSession<'_> {
     pub fn budget(&mut self, budget: Duration) -> &mut Self {
         self.budget = budget;
         self
@@ -1414,12 +1470,23 @@ impl AgentSession {
     fn watched(&mut self, watch: fn(&mut Session) -> Vec<String>) -> Vec<String> {
         let real = std::mem::replace(self, a_fresh_core());
         let AgentSession { app, win, budget, pointer, held, last_press, down, locale, watching } = real;
+        let app = match app {
+            AppRef::Owned(app) => app,
+            AppRef::Borrowed(live) => {
+                // A CORE OVER THE PERSON'S LIVE PROGRAM is no session, and no watch looks at it: it stands
+                // back as it was, its program with it.
+                *self = AgentSession { app: AppRef::Borrowed(live), win, budget, pointer, held, last_press, down, locale, watching };
+                return Vec::new();
+            }
+        };
         // the session of the watch is one of this thread, as a nested session is: the watch may open a chooser and
         // answer it, and closing its session must not hand the real one the system
         crate::system::stand_in(true);
-        let mut shell = Session { core: AgentSession { app, win, budget, pointer, held, last_press, down, locale, watching }, kept: Kept::default() };
+        let mut shell = Session { core: AgentSession { app: AppRef::Owned(app), win, budget, pointer, held, last_press, down, locale, watching }, kept: Kept::default() };
         let problems = watch(&mut shell);
-        std::mem::swap(self, &mut shell.core);
+        // the watched parts come back by value: a swap of the two cores would not do - their programs are held
+        // for different lifetimes, and a program borrowed for the core's own is not one borrowed for a session's
+        *self = std::mem::replace(&mut shell.core, a_fresh_core());
         problems
     }
 
@@ -1668,9 +1735,9 @@ impl AgentSession {
 
 /// A CORE OF A FRESH PROGRAM: what stands in the driven core's place while its parts make a session for the
 /// watch. Nothing of it is read - it is swapped away again before any frame runs.
-fn a_fresh_core() -> AgentSession {
+fn a_fresh_core() -> AgentSession<'static> {
     AgentSession {
-        app: Box::new(App::default()),
+        app: AppRef::Owned(Box::default()),
         win: Window::new(egui::Vec2::ZERO),
         budget: Duration::from_secs(120),
         pointer: None,
@@ -1702,7 +1769,7 @@ impl Session {
         let app = Box::new(super::start_the_program(&win.ctx, Some(&machine.kept)));
         let mut session = Session {
             core: AgentSession {
-                app,
+                app: AppRef::Owned(app),
                 win,
                 budget: Duration::from_secs(120),
                 pointer: None,
