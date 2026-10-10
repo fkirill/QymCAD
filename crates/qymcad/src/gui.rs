@@ -3989,6 +3989,8 @@ mod the_dimensions_of_a_cut_corner_stand_outside;
 mod a_corner_set_takes_its_size_whole;
 /// The agent's core over a borrowed program rounds corners as the hand does: `gui/an_agent_session_rounds_a_corner_as_the_hand_does.rs`.
 mod an_agent_session_rounds_a_corner_as_the_hand_does;
+/// A long settle through the pump keeps the live frames coming: `gui/a_long_settle_through_the_pump_keeps_the_live_frames.rs`.
+mod a_long_settle_through_the_pump_keeps_the_live_frames;
 mod the_box_of_fillet_all_stands_at_the_clicked_side;
 mod every_field_of_a_pattern_bar_has_a_caption;
 mod the_x_key_turns_the_selection;

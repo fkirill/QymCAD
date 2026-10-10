@@ -155,15 +155,27 @@ impl std::ops::DerefMut for AppRef<'_> {
     }
 }
 
-impl<'a> AgentSession<'a> {
-    /// THE CORE OVER A PROGRAM NOT ITS OWN - the person's live one, borrowed for as long as the caller drives
-    /// it. The window is the core's own, without a screen, with the program's fonts in it; nothing is stood
-    /// in for the system, and nothing is started: what the program asks the system for stays asking.
-    pub(crate) fn over(app: &'a mut App, screen: Vec2) -> Self {
+/// THE HANDS OF THE CORE apart from the program: the window and the state that persist between the slices of
+/// a call, when the program itself is lent by the frame - the frame ends, the hands are kept, the next frame
+/// lends the program again. The fields are the core's own; building one without the other does not compile.
+pub(crate) struct Hands {
+    win: Window,
+    budget: Duration,
+    pointer: Option<Pos2>,
+    held: Modifiers,
+    last_press: f64,
+    down: Vec<PointerButton>,
+    locale: String,
+    watching: bool,
+}
+
+impl Hands {
+    /// FRESH HANDS: a window of the agent's own, without a screen, with the program's fonts in it, and the
+    /// machine's locale.
+    pub(crate) fn new(screen: Vec2) -> Self {
         let win = Window::new(screen);
         super::install_fonts(&win.ctx);
         Self {
-            app: AppRef::Borrowed(app),
             win,
             budget: Duration::from_secs(120),
             pointer: None,
@@ -173,6 +185,28 @@ impl<'a> AgentSession<'a> {
             locale: std::env::var("QYM_LOCALE").unwrap_or_else(|_| "en".into()),
             watching: false,
         }
+    }
+}
+
+impl<'a> AgentSession<'a> {
+    /// THE CORE OVER A PROGRAM NOT ITS OWN - the person's live one, borrowed for as long as the caller drives
+    /// it - with fresh hands of the agent's own. Nothing is stood in for the system, and nothing is started:
+    /// what the program asks the system for stays asking.
+    pub(crate) fn over(app: &'a mut App, screen: Vec2) -> Self {
+        Self::with_hands(Hands::new(screen), app)
+    }
+
+    /// THE SAME, WITH HANDS THAT HAVE RUN BEFORE: the slices of one call share their window and their state,
+    /// so egui keeps seeing the whole of the call's gestures - a click is still one click across the slices.
+    pub(crate) fn with_hands(hands: Hands, app: &'a mut App) -> Self {
+        let Hands { win, budget, pointer, held, last_press, down, locale, watching } = hands;
+        Self { app: AppRef::Borrowed(app), win, budget, pointer, held, last_press, down, locale, watching }
+    }
+
+    /// THE HANDS apart from the program, for the next slice: the program goes back to the frame that lent it.
+    pub(crate) fn hands(self) -> Hands {
+        let AgentSession { app: _, win, budget, pointer, held, last_press, down, locale, watching } = self;
+        Hands { win, budget, pointer, held, last_press, down, locale, watching }
     }
 }
 
@@ -488,6 +522,30 @@ impl AgentSession<'_> {
             }
         }
         self
+    }
+
+    /// RUN FRAMES UNTIL THE PROGRAM IS QUIET or `slice` of time has gone, whichever comes first: the way a
+    /// driver that shares the frame thread waits. A slice to each live frame, and the person's window is never
+    /// held still for the agent's sake - when the slice is spent and the program is not quiet, the answer is
+    /// `false` and the caller comes back in the next frame. No sleep inside: the slices are paced by the live
+    /// frames themselves, and what runs in the background runs between them. Answers whether the program came
+    /// to rest.
+    pub fn settle_for(&mut self, slice: Duration) -> bool {
+        if !self.down.is_empty() || self.win.closed {
+            // a button held is a gesture not over, the screen meant to move under it; a closed window has no frames
+            return true;
+        }
+        let began = Instant::now();
+        let mut quiet_frames = 0;
+        while quiet_frames < 2 {
+            self.frame(Vec::new());
+            let still = self.still_running();
+            quiet_frames = if still.is_empty() { quiet_frames + 1 } else { 0 };
+            if quiet_frames < 2 && began.elapsed() >= slice {
+                return false; // the slice is spent and the program is not quiet: more in the next frame
+            }
+        }
+        true
     }
 
     pub fn pause(&mut self, span: Duration) -> &mut Self {
