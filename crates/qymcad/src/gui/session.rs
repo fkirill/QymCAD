@@ -5,6 +5,11 @@
 //! and what it shows is what a person sees: the words on screen, the status line, the document as the program
 //! reports it. The application behind it stays private to the crate, so a check cannot set a field, call a
 //! handler or start a rebuild the window would not have started: it does not compile.
+//!
+//! The session owns a driving core ([`AgentSession`]): the program, the window and the hands, where every
+//! gesture, every wait and every read-out runs. Whatever else drives the program without owning it - an agent
+//! over the person's live window - drives the same core, so no two drivers come to disagree about what a
+//! gesture is.
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
@@ -81,9 +86,19 @@ static WATCH: std::sync::OnceLock<fn(&mut Session) -> Vec<String>> = std::sync::
 
 /// The whole program, driven from outside.
 pub struct Session {
+    /// THE DRIVING CORE: the program, the window and the hands, where every gesture, every wait and every
+    /// read-out of the session runs.
+    core: AgentSession,
+    kept: Kept,
+}
+
+/// THE DRIVING CORE: the program, a window without a screen, and the hands that work them. A session owns one
+/// through the whole of its run; whatever else holds the program over a window of its own drives the same
+/// machinery, so no two drivers come to disagree about what a gesture is. What each gesture and read-out does
+/// is said where the session offers it; the core is what those methods run.
+pub(crate) struct AgentSession {
     app: Box<App>,
     win: Window,
-    kept: Kept,
     /// How long one wait for the program may take before the check fails with what is still running.
     budget: Duration,
     /// Where the pointer stands, once it has come over the window.
@@ -390,94 +405,12 @@ pub enum SketchPick {
     Spline { nodes: Vec<(f64, f64)> },
 }
 
-impl Session {
-    /// START THE PROGRAM on a machine of its defaults, and wait until it is ready for a person.
-    pub fn start() -> Session {
-        Session::start_on(Machine::default())
-    }
-
-    /// START THE PROGRAM on `machine`, the way the window starts it, and wait until it is ready for a person.
-    ///
-    /// # Panics
-    /// When `machine.home` is not the home of the sessions started before in this process: the program's own
-    /// folders are one per process.
-    pub fn start_on(machine: Machine) -> Session {
-        assert!(qymcad_paths::keep_under(machine.home.clone()), "one process keeps one home for the program; {} was asked for after another", machine.home.display());
-        super::prepare_the_process();
-        qymcad_i18n::stand_for_system_locale(&machine.locale);
-        crate::system::stand_in(true);
-        let win = Window::new(egui::vec2(machine.screen.0, machine.screen.1));
-        let app = Box::new(super::start_the_program(&win.ctx, Some(&machine.kept)));
-        let mut session = Session {
-            app,
-            win,
-            kept: machine.kept,
-            budget: Duration::from_secs(120),
-            pointer: None,
-            held: Modifiers::default(),
-            last_press: f64::NEG_INFINITY,
-            down: Vec::new(),
-            locale: machine.locale,
-            watching: false,
-        };
-        if !machine.greeting {
-            // the greeting has been on screen for its time: it goes on the first frame, through its own branch
-            session.app.waiting.splash_until = Some(Instant::now());
-        }
-        session.settle();
-        session
-    }
-
-    /// A MACHINE LIKE THIS SESSION'S: its locale and its settings as they are now, for a second start of the program
-    /// that reads what this one wrote in the same language.
-    pub fn same_machine(&self) -> Machine {
-        let mut kept = Kept::default();
-        eframe::set_value(&mut kept, "settings", &self.app.set);
-        Machine { locale: self.locale.clone(), kept, ..Machine::default() }
-    }
-
-    /// CLOSE THE WINDOW as a person does, with its cross, and keep what the program keeps on the way out.
-    ///
-    /// A program with unsaved work refuses to close and asks what to do with it; then the session is given back,
-    /// still running, with the question on screen.
-    pub fn quit(mut self) -> Result<Kept, Box<Session>> {
-        if !self.win.closed {
-            self.settle();
-            self.speak();
-            self.win.run(&mut self.app, egui::Modifiers::default(), Vec::new(), true);
-            if self.win.close_refused && !self.win.closed {
-                self.settle();
-                return Err(Box::new(self));
-            }
-        }
-        eframe::App::save(&mut *self.app, &mut self.kept);
-        Ok(std::mem::take(&mut self.kept))
-    }
-
-    /// HAS THE PROGRAM CLOSED ITS WINDOW by itself - Quit, or an answer to the question it asked on closing?
-    /// What it keeps is then taken by [`Session::quit`].
-    pub fn closed(&self) -> bool {
-        self.win.closed
-    }
-
-    /// LOOK AT EVERY STEP OF EVERY SESSION OF THIS PROCESS with `watch`: after each gesture - a click, a key, a drag,
-    /// typing, an answer to a chooser - the watch is run on the session, and a problem it answers fails the check at
-    /// that step. Set once per process; `false` when another watch was set first.
-    pub fn watch_every_step(watch: fn(&mut Session) -> Vec<String>) -> bool {
-        WATCH.set(watch).is_ok()
-    }
-
-    /// HOW LONG ONE WAIT MAY TAKE before the check fails, naming what was still running. Two minutes unless said.
+impl AgentSession {
     pub fn budget(&mut self, budget: Duration) -> &mut Self {
         self.budget = budget;
         self
     }
 
-    /// WAIT UNTIL THE PROGRAM IS QUIET, as a person waits: frames go on being drawn until no rebuild, load or
-    /// write is under way and nothing on screen is still moving.
-    ///
-    /// # Panics
-    /// When the budget runs out first, with what was still running.
     pub fn settle(&mut self) -> &mut Self {
         if !self.down.is_empty() || self.win.closed {
             // a button held is a gesture not over, the screen meant to move under it; a closed window has no frames
@@ -497,26 +430,6 @@ impl Session {
         self
     }
 
-    /// WAIT FOR `what` TO HAPPEN, as a person does - frames drawn, the clock on the wall moving - until `happened` says
-    /// it has, for no longer than `deadline`. A probe that slept a fixed span and then looked passed on a fast machine
-    /// and went red now and then on a runner of the CI, where the same work came later: an autosave of 1 s and an
-    /// extrude did not fit in 2.5 s there. The deadline is the bound of a fault, not of a slow machine.
-    ///
-    /// # Panics
-    /// When `deadline` passes first, naming what was waited for.
-    pub fn wait_for(&mut self, what: &str, deadline: Duration, mut happened: impl FnMut(&mut Self) -> bool) -> &mut Self {
-        let began = Instant::now();
-        while !happened(self) {
-            assert!(began.elapsed() < deadline, "waited {deadline:?} for {what}, and it did not happen");
-            assert!(!self.win.closed, "the window closed while waiting for {what}");
-            std::thread::sleep(Duration::from_millis(16));
-            self.frame(Vec::new());
-        }
-        self.settle()
-    }
-
-    /// LET `span` OF REAL TIME PASS with the window drawing its frames, as a person waits with the program in front
-    /// of them: what the program times by the clock on the wall - autosave, the turn of the view - moves on too.
     pub fn pause(&mut self, span: Duration) -> &mut Self {
         let began = Instant::now();
         while began.elapsed() < span {
@@ -529,27 +442,18 @@ impl Session {
         self.settle()
     }
 
-    /// BRING THE POINTER TO `at`.
     pub fn move_to(&mut self, at: Pos2) -> &mut Self {
         self.settle();
         self.go(at);
         self
     }
 
-    /// PRESS `button` where the pointer stands.
-    ///
-    /// # Panics
-    /// When the pointer has not come over the window yet.
     pub fn press(&mut self, button: PointerButton) -> &mut Self {
         self.settle();
         self.button(button, true);
         self
     }
 
-    /// LET GO OF `button` where the pointer stands.
-    ///
-    /// # Panics
-    /// When the pointer has not come over the window yet.
     pub fn release(&mut self, button: PointerButton) -> &mut Self {
         self.settle();
         self.button(button, false);
@@ -557,12 +461,10 @@ impl Session {
         self
     }
 
-    /// CLICK THE LEFT BUTTON at `at`.
     pub fn click(&mut self, at: Pos2) -> &mut Self {
         self.click_with(at, PointerButton::Primary, Modifiers::default())
     }
 
-    /// CLICK `button` at `at` with `modifiers` held for the click.
     pub fn click_with(&mut self, at: Pos2, button: PointerButton, modifiers: Modifiers) -> &mut Self {
         self.settle();
         self.go(at);
@@ -575,8 +477,6 @@ impl Session {
         self
     }
 
-    /// DOUBLE-CLICK THE LEFT BUTTON at `at`: two clicks a few frames apart, well inside the time a double click
-    /// is allowed.
     pub fn double_click(&mut self, at: Pos2) -> &mut Self {
         self.settle();
         self.go(at);
@@ -588,8 +488,6 @@ impl Session {
         self
     }
 
-    /// DRAG WITH `button` from `from` to `to`, `modifiers` held: pressed, carried over in even steps a frame
-    /// each, and let go.
     pub fn drag(&mut self, from: Pos2, to: Pos2, button: PointerButton, modifiers: Modifiers) -> &mut Self {
         self.settle();
         self.drag_holding(from, to, &[button], modifiers);
@@ -597,8 +495,6 @@ impl Session {
         self
     }
 
-    /// DRAG WITH SEVERAL BUTTONS AT ONCE, all of them held from `from` to `to`; no button at all is a movement
-    /// with only `modifiers` down, the way a touchpad moves the view.
     pub fn drag_with(&mut self, from: Pos2, to: Pos2, buttons: &[PointerButton], modifiers: Modifiers) -> &mut Self {
         self.settle();
         self.drag_holding(from, to, buttons, modifiers);
@@ -606,8 +502,6 @@ impl Session {
         self
     }
 
-    /// TURN THE WHEEL with the pointer at `at`, by `delta` points (positive `y` is away from the person, which
-    /// scrolls up), `modifiers` held.
     pub fn wheel(&mut self, at: Pos2, delta: Vec2, modifiers: Modifiers) -> &mut Self {
         self.settle();
         self.go(at);
@@ -620,24 +514,20 @@ impl Session {
         self
     }
 
-    /// HOLD `modifiers` DOWN until [`Session::let_go`], across every gesture in between.
     pub fn hold(&mut self, modifiers: Modifiers) -> &mut Self {
         self.held |= modifiers;
         self
     }
 
-    /// Let go of every key held down.
     pub fn let_go(&mut self) -> &mut Self {
         self.held = Modifiers::default();
         self
     }
 
-    /// PRESS AND RELEASE `key`, with whatever is held.
     pub fn key(&mut self, key: Key) -> &mut Self {
         self.chord(Modifiers::default(), key)
     }
 
-    /// PRESS AND RELEASE `key` with `modifiers` down: Ctrl+K is `chord(Modifiers::COMMAND, Key::K)`.
     pub fn chord(&mut self, modifiers: Modifiers, key: Key) -> &mut Self {
         self.settle();
         let before = self.held;
@@ -650,7 +540,6 @@ impl Session {
         self
     }
 
-    /// TYPE `text` on the keyboard, into whatever holds the keyboard.
     pub fn type_text(&mut self, text: &str) -> &mut Self {
         self.settle();
         self.frame(vec![egui::Event::Text(text.to_string())]);
@@ -658,7 +547,6 @@ impl Session {
         self
     }
 
-    /// PASTE `text` from the clipboard, as Ctrl+V does.
     pub fn paste(&mut self, text: &str) -> &mut Self {
         self.settle();
         self.frame(vec![egui::Event::Paste(text.to_string())]);
@@ -666,7 +554,6 @@ impl Session {
         self
     }
 
-    /// COPY, as Ctrl+C does; what reached the clipboard is in [`Session::clipboard`].
     pub fn copy(&mut self) -> &mut Self {
         self.settle();
         self.frame(vec![egui::Event::Copy]);
@@ -674,7 +561,6 @@ impl Session {
         self
     }
 
-    /// CUT, as Ctrl+X does.
     pub fn cut(&mut self) -> &mut Self {
         self.settle();
         self.frame(vec![egui::Event::Cut]);
@@ -682,73 +568,30 @@ impl Session {
         self
     }
 
-    /// WHICH CHOOSER THE PROGRAM HAS PUT UP and waits on, if any.
-    pub fn chooser(&mut self) -> Option<Chooser> {
-        self.settle();
-        crate::system::with_stand_in(|s| s.asked.as_ref().map(|a| a.kind)).flatten()
-    }
-
-    /// THE FOLDER THE CHOOSER THAT IS UP OPENS IN; `None` when no chooser is up or it leaves the folder to the
-    /// system.
-    pub fn chooser_folder(&mut self) -> Option<std::path::PathBuf> {
-        self.settle();
-        crate::system::with_stand_in(|s| s.asked.as_ref().and_then(|a| a.folder.clone())).flatten()
-    }
-
-    /// ANSWER THE CHOOSER with `path`, as a person picks a file in it.
-    ///
-    /// # Panics
-    /// When no chooser is up.
-    pub fn answer_file(&mut self, path: impl AsRef<std::path::Path>) -> &mut Self {
-        self.answer(Some(path.as_ref().to_path_buf()))
-    }
-
-    /// CLOSE THE CHOOSER without choosing.
-    ///
-    /// # Panics
-    /// When no chooser is up.
-    pub fn cancel_file(&mut self) -> &mut Self {
-        self.answer(None)
-    }
-
-    /// WHAT THE PROGRAM ASKED THE SYSTEM TO START - a file manager, a browser - with its arguments, in order.
-    pub fn started(&self) -> Vec<(String, Vec<String>)> {
-        crate::system::with_stand_in(|s| s.started.clone()).unwrap_or_default()
-    }
-
     /// WHAT REACHED THE CLIPBOARD, oldest first.
     pub fn clipboard(&self) -> &[String] {
         &self.win.copied
     }
 
-    /// The pages the program asked the system to open, oldest first.
     pub fn opened_pages(&self) -> &[String] {
         &self.win.urls
     }
 
-    /// RESIZE THE WINDOW to `size` points.
     pub fn resize(&mut self, size: Vec2) -> &mut Self {
         self.win.screen = size;
         self.settle();
         self
     }
 
-    /// The size of the window, in points.
     pub fn screen(&self) -> Vec2 {
         self.win.across() // in points, which the interface scale changes
     }
 
-    /// WHERE `text` IS WRITTEN ON SCREEN, whole - the place nearest to `near` when it is written in several.
     pub fn find(&mut self, text: &str, near: Pos2) -> Option<Rect> {
         self.settle();
         self.win.drawn.iter().filter(|(t, _)| t == text).map(|(_, r)| *r).min_by(|a, b| a.center().distance(near).total_cmp(&b.center().distance(near)))
     }
 
-    /// PRESS WHERE `text` IS WRITTEN - a menu item, a tree row, a button with a caption.
-    ///
-    /// # Panics
-    /// When `text` is not on screen, or is written in more than one place: then [`Session::press_word_near`] says
-    /// which one.
     pub fn press_word(&mut self, text: &str) -> &mut Self {
         let places: Vec<Rect> = self.places_of(text);
         match places.as_slice() {
@@ -758,10 +601,6 @@ impl Session {
         }
     }
 
-    /// PRESS WHERE `text` IS WRITTEN, the place nearest to `near` when it is written in several.
-    ///
-    /// # Panics
-    /// When `text` is not on screen.
     pub fn press_word_near(&mut self, text: &str, near: Pos2) -> &mut Self {
         match self.find(text, near) {
             Some(r) => self.click(r.center()),
@@ -769,15 +608,11 @@ impl Session {
         }
     }
 
-    /// WHERE THE SIDE PANEL `id` STANDS, as the last frame laid it out: its outer rectangle, the divider at its edge.
-    /// `None` when no such panel was drawn.
     pub fn panel(&mut self, id: &str) -> Option<Rect> {
         self.settle();
         egui::PanelState::load(&self.win.ctx, egui::Id::new(id)).map(|p| p.outer_rect)
     }
 
-    /// WHAT THE LAST FRAME PAINTED that a person reads as content: every run of words, and every filled background of
-    /// one row's height - a highlight, a button - named "a filled background". The ground of a whole area is left out.
     pub fn painted(&mut self) -> Vec<(Rect, String)> {
         fn collect(s: &egui::Shape, out: &mut Vec<(Rect, String)>) {
             match s {
@@ -795,10 +630,6 @@ impl Session {
         out
     }
 
-    /// GO DOWN A MENU: press each of `path` in turn, each nearest to the one pressed before it.
-    ///
-    /// # Panics
-    /// When an item of the path is not on screen.
     pub fn menu(&mut self, path: &[&str]) -> &mut Self {
         let mut near = pos2(0.0, 0.0);
         for item in path {
@@ -817,12 +648,6 @@ impl Session {
         self
     }
 
-    /// PRESS THE BUTTON WHOSE HINT IS `hint`, found as a person finds an icon they do not know: the pointer goes
-    /// over the buttons and rests until the hint comes up; a panel longer than the window is scrolled with the
-    /// wheel.
-    ///
-    /// # Panics
-    /// When no button of the window has that hint.
     pub fn press_hint(&mut self, hint: &str) -> &mut Self {
         match self.find_hint(hint) {
             Some(at) => self.click(at),
@@ -830,8 +655,6 @@ impl Session {
         }
     }
 
-    /// WHERE THE BUTTON WITH THE HINT `hint` IS, looked for as [`Session::press_hint`] looks; `None` when no
-    /// button has it.
     pub fn find_hint(&mut self, hint: &str) -> Option<Pos2> {
         if let Some(at) = self.look_for_hint(hint) {
             return Some(at);
@@ -860,30 +683,6 @@ impl Session {
         small.into_iter().find(|&at| self.hint_comes_up(at, hint))
     }
 
-    /// Look for the button with the hint `hint` from where the panel stands now, scrolling downwards.
-    fn look_for_hint(&mut self, hint: &str) -> Option<Pos2> {
-        self.settle();
-        let mut scrolled = 0;
-        loop {
-            for at in self.win.plates.clone() {
-                if self.hint_comes_up(at, hint) {
-                    return Some(at);
-                }
-            }
-            // down the panel the buttons stand in, a notch of the wheel at a time
-            let over = self.win.plates.first().copied()?;
-            let before = self.win.plates.clone();
-            self.wheel(over, vec2(0.0, -200.0), Modifiers::default());
-            self.settle();
-            scrolled += 1;
-            if self.win.plates == before || scrolled > 10 {
-                return None; // the panel went no further: there is no such button
-            }
-        }
-    }
-
-    /// THE HINTS OF THE SMALL ICON BUTTONS OUTSIDE THE TOOL PLATES - the cross beside a line of the properties - read
-    /// as the plates are: the pointer rests over each in turn. A button without a hint is left out.
     pub fn icon_hints(&mut self) -> Vec<String> {
         let small = self.small_buttons();
         let mut hints: Vec<String> = Vec::new();
@@ -896,21 +695,6 @@ impl Session {
         hints
     }
 
-    /// Take the pointer off the buttons so no hint is up when they are read: to the empty right end of the menu bar,
-    /// not onto the canvas - there the readout of the coordinates changes as the pointer leaves it again, and its words
-    /// would be read as part of the next hint.
-    fn pointer_off_the_plates(&mut self) {
-        let c = self.canvas();
-        self.move_to(pos2(c.max.x - 8.0, 10.0));
-    }
-
-    /// Where the small buttons of the window stand: an icon, not a tool plate and not a word.
-    fn small_buttons(&mut self) -> Vec<Pos2> {
-        self.widgets().into_iter().filter(|w| matches!(w.kind, crate::gui::window::Kind::Button) && w.rect.width() <= 32.0 && w.rect.height() <= 32.0).map(|w| w.rect.center()).collect()
-    }
-
-    /// THE HINT OF EVERY TOOL BUTTON OF THE WINDOW, read as a person reads them: the pointer rests over each button in
-    /// turn, and a panel longer than the window is scrolled with the wheel. A button without a hint is given as empty.
     pub fn button_hints(&mut self) -> Vec<String> {
         self.settle();
         // a panel left scrolled down by what was done before hides its first buttons: back to the top first, as
@@ -948,8 +732,6 @@ impl Session {
         }
     }
 
-    /// THE HINT OF WHAT IS UNDER `at`, read as it comes up after the pointer rests there; `None` when nothing
-    /// new comes up.
     pub fn hint_at(&mut self, at: Pos2) -> Vec<String> {
         self.settle();
         let before: Vec<String> = self.win.drawn.iter().map(|(t, _)| t.clone()).collect();
@@ -964,17 +746,11 @@ impl Session {
         came
     }
 
-    /// EVERY WIDGET ON SCREEN once it is at rest, as the window describes them to a screen reader.
     pub fn widgets(&mut self) -> Vec<Widget> {
         self.settle();
         self.win.widgets.clone()
     }
 
-    /// THE FIELD A PERSON FILLS UNDER THE CAPTION `label`: the text field, spin box, list or checkbox that stands
-    /// nearest after the caption - on its row to the right first, below it otherwise.
-    ///
-    /// # Panics
-    /// When `label` is not on screen or nothing to fill stands after it.
     pub fn field(&mut self, label: &str) -> Widget {
         self.settle();
         let captions = self.places_of(label);
@@ -997,27 +773,11 @@ impl Session {
         }
     }
 
-    /// FILL THE FIELD under the caption `label` with `text`: click into it, select what is there, type over it.
-    /// Nothing is pressed after - Enter and Tab are the check's to press.
     pub fn fill(&mut self, label: &str, text: &str) -> &mut Self {
         let field = self.field(label);
         self.click(field.rect.center()).chord(Modifiers::COMMAND, Key::A).type_over(text)
     }
 
-    /// TYPE `text` OVER WHAT IS SELECTED - nothing typed clears it, as Backspace does: typing no letters over a
-    /// selection leaves it standing, which is not what a person emptying a field does.
-    fn type_over(&mut self, text: &str) -> &mut Self {
-        if text.is_empty() {
-            self.key(Key::Backspace)
-        } else {
-            self.type_text(text)
-        }
-    }
-
-    /// FILL THE EMPTY FIELD that shows `placeholder` in grey - the name of a new row, say - with `text`.
-    ///
-    /// # Panics
-    /// When no empty field shows it, or more than one does.
     pub fn fill_empty(&mut self, placeholder: &str, text: &str) -> &mut Self {
         self.settle();
         let fields: Vec<Widget> = self.win.widgets.iter().filter(|w| w.kind == Kind::TextField && w.placeholder == placeholder && w.value.is_empty()).cloned().collect();
@@ -1028,11 +788,6 @@ impl Session {
         }
     }
 
-    /// FILL THE FIELD THAT SHOWS `placeholder` in grey - a field of a dimension holds a number and still shows what it
-    /// would take - with `text`, over what it holds.
-    ///
-    /// # Panics
-    /// When no field shows it, or more than one does.
     pub fn fill_hinted(&mut self, placeholder: &str, text: &str) -> &mut Self {
         self.settle();
         let fields: Vec<Widget> = self.win.widgets.iter().filter(|w| w.kind == Kind::TextField && w.placeholder == placeholder).cloned().collect();
@@ -1043,11 +798,6 @@ impl Session {
         }
     }
 
-    /// FILL THE FIRST FIELD, in reading order, THAT SHOWS `placeholder` in grey with `text`, over what it holds: the
-    /// first value of a bar that holds two fields of the same grey words - the size of a chamfer and its second leg.
-    ///
-    /// # Panics
-    /// When no field shows it.
     pub fn fill_first_hinted(&mut self, placeholder: &str, text: &str) -> &mut Self {
         self.settle();
         let first = self
@@ -1063,10 +813,6 @@ impl Session {
         }
     }
 
-    /// TICK OR UNTICK THE CHECKBOX whose words are `label`.
-    ///
-    /// # Panics
-    /// When no checkbox has those words.
     pub fn toggle(&mut self, label: &str) -> &mut Self {
         self.settle();
         let boxes: Vec<Widget> = self.win.widgets.iter().filter(|w| w.kind == Kind::CheckBox && w.label == label).cloned().collect();
@@ -1077,43 +823,27 @@ impl Session {
         }
     }
 
-    /// THE CANVAS - the sketch sheet or the 3D view - where the window laid it out.
     pub fn canvas(&mut self) -> Rect {
         self.settle();
         self.app.viewing.view_rect
     }
 
-    /// WHERE THE POINT (x, y) OF THE SKETCH OPEN FOR EDITING STANDS ON SCREEN, on the canvas as the window laid it
-    /// out. A point out of view is brought into it first, the way a person does it: the sheet is dragged with the
-    /// middle button.
-    ///
-    /// # Panics
-    /// When no sketch is open on the flat canvas, or the point cannot be brought into view.
     pub fn on_sketch(&mut self, x: f64, y: f64) -> Pos2 {
         self.settle();
         assert!(!self.app.viewing.mode_3d && qymcad_ui_state::edit_si(&self.app.project, &self.app.sketch_ses).is_some(), "no sketch is open on the flat canvas");
-        let at = |s: &Session| qymcad_ui_state::Sheet { view: s.app.viewing.view, rect: s.app.viewing.view_rect }.at(qymcad_core::geom::Point2::new(x, y));
+        let at = |s: &AgentSession| qymcad_ui_state::Sheet { view: s.app.viewing.view, rect: s.app.viewing.view_rect }.at(qymcad_core::geom::Point2::new(x, y));
         self.bring_into_view(&at, &[PointerButton::Middle], Modifiers::default());
         at(self)
     }
 
-    /// WHERE THE POINT (x, y) OF THE FLAT SHEET IS CLICKED, whatever sketch the sheet shows - one open for editing, or
-    /// a finished one a tool lays flat for its contours to be picked - brought into view as [`Session::on_sketch`]
-    /// brings it.
-    ///
-    /// # Panics
-    /// When the canvas is not the flat sheet, or the point cannot be brought into view.
     pub fn on_sheet(&mut self, x: f64, y: f64) -> Pos2 {
         self.settle();
         assert!(!self.app.viewing.mode_3d, "the canvas is not the flat sheet");
-        let at = |s: &Session| qymcad_ui_state::Sheet { view: s.app.viewing.view, rect: s.app.viewing.view_rect }.at(qymcad_core::geom::Point2::new(x, y));
+        let at = |s: &AgentSession| qymcad_ui_state::Sheet { view: s.app.viewing.view, rect: s.app.viewing.view_rect }.at(qymcad_core::geom::Point2::new(x, y));
         self.bring_into_view(&at, &[PointerButton::Middle], Modifiers::default());
         at(self)
     }
 
-    /// WHERE THE POINT (x, y) OF THE OPEN SKETCH IS SEEN NOW, with the sheet left as it stands - what the eye reads
-    /// off the screen while the sheet is moved or scaled. `None` when it falls outside the canvas or no sketch is open
-    /// on the flat canvas. Unlike [`Session::on_sketch`] it moves nothing.
     pub fn seen_on_sketch(&mut self, x: f64, y: f64) -> Option<Pos2> {
         self.settle();
         if self.app.viewing.mode_3d || qymcad_ui_state::edit_si(&self.app.project, &self.app.sketch_ses).is_none() {
@@ -1123,17 +853,11 @@ impl Session {
         self.app.viewing.view_rect.contains(at).then_some(at)
     }
 
-    /// CLICK THE POINT (x, y) OF THE OPEN SKETCH, brought into view as [`Session::on_sketch`] brings it.
     pub fn click_on_sketch(&mut self, x: f64, y: f64) -> &mut Self {
         let at = self.on_sketch(x, y);
         self.click(at)
     }
 
-    /// DRAG ON THE OPEN SKETCH from the point `from` to the point `to` with the left button: both are brought into
-    /// view together first - a place worked out before the view moved is a place on another part of the sheet.
-    ///
-    /// # Panics
-    /// When no sketch is open, or the two points do not fit on the canvas at once.
     pub fn drag_on_sketch(&mut self, from: (f64, f64), to: (f64, f64)) -> &mut Self {
         let mid = ((from.0 + to.0) / 2.0, (from.1 + to.1) / 2.0);
         self.on_sketch(mid.0, mid.1);
@@ -1181,23 +905,16 @@ impl Session {
         Some(SketchPick::Spline { nodes: spline.points.iter().map(|p| pt(*p)).collect() })
     }
 
-    /// WHERE THE POINT `p` OF THE 3D VIEW FALLS ON SCREEN AS THE VIEW STANDS NOW - no gesture, nothing brought into view,
-    /// covered or not: to see whether the view shows the whole of something.
     pub fn projected(&mut self, p: [f64; 3]) -> Pos2 {
         self.settle();
         let basis = self.app.viewing.cam.basis();
         qymcad_ui_state::Screen { cam: &self.app.viewing.cam, set: &self.app.set, rect: self.app.viewing.view_rect, basis: &basis }.at(p).0
     }
 
-    /// WHERE THE POINT `p` OF THE 3D VIEW STANDS ON SCREEN, brought into view first with the gesture that moves
-    /// the view under the person's mouse settings.
-    ///
-    /// # Panics
-    /// When the view is not 3D, the point cannot be brought into view, or something nearer to the eye covers it.
     pub fn in_space(&mut self, p: [f64; 3]) -> Pos2 {
         self.settle();
         assert!(self.app.viewing.mode_3d, "the canvas is not the 3D view");
-        let at = move |s: &Session| {
+        let at = move |s: &AgentSession| {
             let basis = s.app.viewing.cam.basis();
             qymcad_ui_state::Screen { cam: &s.app.viewing.cam, set: &s.app.set, rect: s.app.viewing.view_rect, basis: &basis }.at(p).0
         };
@@ -1218,18 +935,6 @@ impl Session {
         pos
     }
 
-    /// WHAT OF THE WINDOW STANDS OVER THE CANVAS AT `pos` - a button, a field, a panel - and so takes a click aimed at
-    /// the model there. A widget takes a click that falls within its reach of it, not only on it: 1.4 px above the
-    /// Apply button of a tool's popup the click went to the popup, and the edge under it was not picked.
-    fn covering(&mut self, pos: Pos2) -> Option<Widget> {
-        let canvas = self.app.viewing.view_rect;
-        let reach = self.win.ctx.global_style().interaction.interact_radius;
-        self.win.widgets.iter().find(|w| w.rect.expand(reach).contains(pos) && w.rect != canvas).cloned()
-    }
-
-    /// WHERE THE POINT `p` OF THE WORLD IS SEEN NOW, with the view left as it stands - what the eye reads off the
-    /// screen while the view is being turned, moved or scaled. `None` when it falls outside the canvas or the
-    /// canvas is the flat sheet. Unlike [`Session::in_space`] it moves nothing.
     pub fn seen_at(&mut self, p: [f64; 3]) -> Option<Pos2> {
         self.settle();
         if !self.app.viewing.mode_3d {
@@ -1240,9 +945,6 @@ impl Session {
         self.app.viewing.view_rect.contains(pos).then_some(pos)
     }
 
-    /// WHERE THE SIDE OF THE NAVIGATION CUBE THAT READS `side` IS CLICKED - TOP, FRONT and the rest. The captions
-    /// of the cube are baked into the drawing of it, so they stand on no word of the screen; the eye reads them off
-    /// the cube all the same. `None` when no side reads that.
     pub fn cube_side(&mut self, side: &str) -> Option<Pos2> {
         self.settle();
         let cube = self.app.cube_ctx();
@@ -1252,9 +954,6 @@ impl Session {
         Some(super::viewcube::zone_center(&cube, rect, i))
     }
 
-    /// WHERE THE NAVIGATION CUBE IS CLICKED TO LOOK FROM `dir` - the way from the model to the eye, each coordinate
-    /// -1, 0 or 1: a side of the cube for one axis, an edge of it for two, a corner for three. `None` when that part
-    /// of the cube is on its far side, out of the eye's reach, as it stands now: a person turns the cube to it first.
     pub fn cube_toward(&mut self, dir: [i8; 3]) -> Option<Pos2> {
         self.settle();
         let cube = self.app.cube_ctx();
@@ -1274,8 +973,6 @@ impl Session {
         (super::viewcube::zone_at(&cube, rect, at) == Some(i)).then_some(at)
     }
 
-    /// CAN THE POINT `p` OF SPACE BE SEEN AS THE VIEW STANDS: on the canvas, and no face nearer to the eye covers it.
-    /// The view is not moved.
     pub fn sees(&mut self, p: [f64; 3]) -> bool {
         let Some(pos) = self.seen_at(p) else { return false };
         if self.covering(pos).is_some() {
@@ -1285,8 +982,6 @@ impl Session {
         qymcad_pick::face_under_cursor(&self.app.painting(), self.app.viewing.view_rect, pos).is_none_or(|(hit, _, _)| hit >= depth - 4.0 * tol)
     }
 
-    /// WHERE THE GIZMO OF WHAT IS CHOSEN STANDS: the arms to carry it and the rings to turn it. `None` when what
-    /// is chosen carries no gizmo, or the canvas is the flat sheet.
     pub fn gizmo(&mut self) -> Option<Gizmo> {
         self.settle();
         if !self.app.viewing.mode_3d {
@@ -1320,16 +1015,11 @@ impl Session {
         Some(Gizmo { arms: [arm(0), arm(1), arm(2)], rings: [ring(0), ring(1), ring(2)] })
     }
 
-    /// IS THE CANVAS THE FLAT SHEET? - the sketch drawn flat before the eye, rather than the model in space.
     pub fn flat(&mut self) -> bool {
         self.settle();
         !self.app.viewing.mode_3d
     }
 
-    /// WHERE A FACE THROUGH `p` IS CLICKED: the point in view, and a click there takes a face through `p`.
-    ///
-    /// # Panics
-    /// As [`Session::in_space`] does, and when the surface under the pointer does not pass through `p`.
     pub fn face_at(&mut self, p: [f64; 3]) -> Pos2 {
         let pos = self.in_space(p);
         let (tol, depth) = self.pixel_and_depth(p);
@@ -1338,10 +1028,6 @@ impl Session {
         pos
     }
 
-    /// WHERE AN EDGE THROUGH `p` IS CLICKED: the point in view, and the edge the pointer takes passes through `p`.
-    ///
-    /// # Panics
-    /// As [`Session::in_space`] does, and when the edge under the pointer does not pass through `p`.
     pub fn edge_at(&mut self, p: [f64; 3]) -> Pos2 {
         let pos = self.in_space(p);
         let (tol, _) = self.pixel_and_depth(p);
@@ -1350,10 +1036,6 @@ impl Session {
         pos
     }
 
-    /// WHERE THE VERTEX `p` IS CLICKED: the point in view, and the vertex the pointer takes is `p`.
-    ///
-    /// # Panics
-    /// As [`Session::in_space`] does, and when the vertex under the pointer is not `p`.
     pub fn vertex_at(&mut self, p: [f64; 3]) -> Pos2 {
         let pos = self.in_space(p);
         let (tol, _) = self.pixel_and_depth(p);
@@ -1362,47 +1044,22 @@ impl Session {
         pos
     }
 
-    /// `f` DONE ASIDE: what is chosen and the status line are as they were when it returns - for a check that makes
-    /// steps of its own between the steps of a person (taking a step back and putting it again, rebuilding
-    /// everything) and must leave the next step of the person where the last one left it.
-    pub fn aside<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
-        let (sel, multi, status) = (self.app.chosen.sel, self.app.chosen.tree_sel.multi.clone(), self.app.status.clone());
-        let out = f(self);
-        (self.app.chosen.sel, self.app.chosen.tree_sel.multi, self.app.status) = (sel, multi, status);
-        out
-    }
-
-    /// HOW MANY THINGS OF THE SKETCH STAND LIT - the count a person would count by eye.
     pub fn lit_in_sketch(&self) -> usize {
         self.app.tools.sel_sk.items.len()
     }
 
-    /// WHICH EDITING BUTTON IS IN HAND, by its own number: 4 the corner fillet, 5 the chamfer, 0 none of them.
     pub fn editing_tool(&self) -> u8 {
         self.app.tools.armed.click_op()
     }
 
-    /// Is a text field taking the keys - a person in the middle of typing, where Ctrl+Z is the field's own?
     pub fn typing(&self) -> bool {
         self.win.ctx.egui_wants_keyboard_input()
     }
 
-    /// Is the program asking for a file - a chooser up and waiting for its answer?
     pub fn asking_for_a_file(&self) -> bool {
         self.app.asking_for_a_file()
     }
 
-    /// A COPY OF THE DOCUMENT WRITTEN TO `path`, the document keeping its own place and name - what a check of saving and
-    /// opening needs in the middle of a session without changing the session it checks.
-    pub fn save_copy(&mut self, path: &str) -> Result<(), String> {
-        self.settle();
-        // the live bodies go with it, as File -> Save writes them
-        let live = &self.app.live;
-        let breps: Vec<(qymcad_core::model::Id, Vec<u8>)> = live.shapes.iter().filter_map(|(id, sh)| live.blobs.get(id).cloned().or_else(|| sh.to_brep_bytes()).map(|b| (*id, b))).collect();
-        qymcad_io::save_project_guarded_with_brep(&self.app.project, path, &breps).map_err(|e| e.to_string())
-    }
-
-    /// THE DOCUMENT once the program is at rest.
     pub fn document(&mut self) -> Document {
         self.settle();
         let app = &self.app;
@@ -1552,8 +1209,6 @@ impl Session {
         }
     }
 
-    /// WHAT THE EXACT BODY NUMBERED `body` IN [`Document::bodies`] IS MADE OF; `None` while the program holds no exact
-    /// body for it (a mesh brought in as it is) or the kernel cannot read it.
     pub fn inspect(&mut self, body: usize) -> Option<Inspection> {
         self.settle();
         let id = self.app.project.bodies.get(body)?.id;
@@ -1567,9 +1222,6 @@ impl Session {
         })
     }
 
-    /// HOW THE 3D VIEW DRAWS EACH PIECE OF WHAT IT SHOWS on a screen with a graphics card: the colour of the row of
-    /// the table of looks its vertices name, and whether that row is painted as selected. It is what a person sees -
-    /// the picture of [`Session::snapshot`] draws the space another way and cannot show what the card is handed.
     pub fn drawn(&mut self) -> Vec<([u8; 3], bool)> {
         self.settle();
         let scene = super::render_scene::gpu_scene(&self.app.painting());
@@ -1585,21 +1237,17 @@ impl Session {
             .collect()
     }
 
-    /// THE STATUS LINE once the program is at rest.
     pub fn status(&mut self) -> String {
         self.settle();
         // the icons of the interface are letters of a private range of the icon font, not words
         self.app.status.chars().filter(|c| !('\u{e000}'..='\u{f8ff}').contains(c)).collect::<String>().trim().to_string()
     }
 
-    /// THE WINDOWS OPEN INSIDE THE PROGRAM, by their titles.
     pub fn windows(&mut self) -> Vec<String> {
         self.settle();
         self.win.widgets.iter().filter(|w| w.kind == Kind::Window).map(|w| w.label.clone()).collect()
     }
 
-    /// WHAT IS IN HAND, as the bars of options across the top say it: the words written in every bar a tool or a
-    /// command has put up. Empty when nothing is.
     pub fn in_hand(&mut self) -> Vec<String> {
         use qymcad_shell::Fills;
         self.settle();
@@ -1613,13 +1261,11 @@ impl Session {
         self.win.drawn.iter().filter(|(t, r)| !t.is_empty() && bars.iter().any(|b| b.contains(r.center()))).map(|(t, _)| t.clone()).collect()
     }
 
-    /// EVERY WORD ON SCREEN AND WHERE IT STANDS, once the screen is at rest.
     pub fn words_at(&mut self) -> Vec<(String, Rect)> {
         self.settle();
         self.win.drawn.iter().filter(|(t, _)| !t.is_empty()).cloned().collect()
     }
 
-    /// A PICTURE OF THE WINDOW once it is at rest, drawn on the processor from what the last frame drew.
     pub fn snapshot(&mut self) -> Picture {
         self.settle();
         let ppp = self.win.ctx.pixels_per_point();
@@ -1629,10 +1275,6 @@ impl Session {
         Picture { width: size[0], height: size[1], rgba: img.pixels.iter().flat_map(|c| c.to_array()).collect() }
     }
 
-    /// CLOSE THE WINDOW TITLED `title` INSIDE THE PROGRAM with the cross on its title bar.
-    ///
-    /// # Panics
-    /// When no such window is open, or it has no cross.
     pub fn close_window(&mut self, title: &str) -> &mut Self {
         self.settle();
         let Some(window) = self.win.widgets.iter().find(|w| w.kind == Kind::Window && w.label == title).map(|w| w.rect) else {
@@ -1651,20 +1293,15 @@ impl Session {
         }
     }
 
-    /// THE LONGEST A FRAME TOOK SINCE THE LAST STEP WAS WATCHED, in wall time; asking starts the count again.
     pub fn step_frame(&mut self) -> Duration {
         std::mem::take(&mut self.win.worst_step_frame)
     }
 
-    /// THE WORDS ON SCREEN THAT ARE KEYS OF THE CATALOGUE, not words: a key is what the program shows when it has no
-    /// string for it, and a person reads `feat-name-extrude` where a name should be.
     pub fn words_that_are_keys(&mut self) -> Vec<String> {
         let keys: std::collections::HashSet<String> = crate::i18n::reference_keys().into_iter().collect();
         self.words().into_iter().filter(|w| keys.contains(w.split('#').next().unwrap_or(w))).collect()
     }
 
-    /// THE WORDS DRAWN WITH A LETTER THE FONT DOES NOT HAVE - a person sees a box in its place - once the screen is at
-    /// rest.
     pub fn words_without_glyphs(&mut self) -> Vec<String> {
         self.settle();
         let mut out = Vec::new();
@@ -1707,16 +1344,12 @@ impl Session {
         out
     }
 
-    /// WHAT WAITS FOR A CLICK WITH NO BAR OF OPTIONS SAYING SO: a tool in hand, or a pick a button started, while no
-    /// bar a tool or a command puts up is on screen. `None` when there is nothing, or its bar is up.
     pub fn waiting_without_bar(&mut self) -> Option<String> {
         let bar = self.in_hand();
         let waiting = self.waiting_for_a_click();
         (bar.is_empty() && !waiting.is_empty()).then(|| waiting.join(", "))
     }
 
-    /// A BAR OF OPTIONS WITH NOTHING IN HAND: its words, while no tool, no pick, no sketch open, no section, no pattern
-    /// of components and no joint being edited stands behind it. `None` when there is no such bar.
     pub fn bar_with_nothing_in_hand(&mut self) -> Option<Vec<String>> {
         let bar = self.in_hand();
         if bar.is_empty() || !self.waiting_for_a_click().is_empty() {
@@ -1727,91 +1360,67 @@ impl Session {
         (!behind).then_some(bar)
     }
 
-    /// Everything that waits for a click - a tool in hand, a pick a button started - in words.
-    fn waiting_for_a_click(&self) -> Vec<String> {
-        let app = &self.app;
-        let mut waiting = Vec::new();
-        if app.tools.armed != qymcad_ui_state::Armed::None {
-            waiting.push(format!("the tool {:?}", app.tools.armed));
-        }
-        let joint = &app.side.joint;
-        for (on, what) in [
-            (app.params.mirror.in_hand(), "the plane of a mirrored copy"),
-            (app.side.section.pick, "the plane of a section"),
-            (app.tools.picking.sketch_for().is_some(), "a sketch for a command"),
-            (app.tools.picking.is_sketch_plane(), "the plane of a new sketch"),
-            (app.side.m3.on, "the elements to measure"),
-            (app.tools.picking.fillet_all(), "the shape whose corners are rounded"),
-            (app.side.clip.geom_pending.is_some() || app.side.clip.geom_place, "the base point or the place of a copy"),
-            (app.params.boolean.pick.is_some(), "the second body of a boolean"),
-            (app.params.boolean.edit.is_some(), "the kind of a boolean being edited"),
-            (joint.pick_faces || joint.conn_pick, "an anchor of a joint"),
-            (joint.ground_pick, "a part to ground"),
-            (joint.group_pick.is_some(), "the parts of a group"),
-            (joint.width_pick.is_some(), "the walls of a width"),
-            (joint.tangent_pick.is_some(), "the surfaces of a tangent"),
-            (joint.axis_pick.is_some(), "the axis of an anchor"),
-            (joint.edit_repick.is_some(), "a new anchor of a joint"),
-            (joint.relation_pick.is_some(), "the joints of a relation"),
-        ] {
-            if on {
-                waiting.push(what.to_string());
-            }
-        }
-        waiting
-    }
-
-    /// THE LONGEST A FRAME TOOK since this was last asked, in wall time; asking starts the count again.
     pub fn worst_frame(&mut self) -> Duration {
         std::mem::take(&mut self.win.worst_frame)
     }
 
-    /// THE TITLE OF THE WINDOW, as the program last set it.
     pub fn title(&mut self) -> String {
         self.settle();
         self.win.title.clone().unwrap_or_default()
     }
 
-    /// The words a person reads in the program's language for the catalogue entry `key`.
     pub fn word(&self, key: &str) -> String {
         self.speak();
         crate::i18n::tr(key)
     }
 
-    /// THE CODE OF THE LANGUAGE the program speaks (`en`, `ru`).
     pub fn language(&self) -> String {
         self.speak();
         crate::i18n::language()
     }
 
-    /// THIS SESSION'S LANGUAGE ON THIS THREAD again: the machine's locale and the program's own setting.
-    fn speak(&self) {
-        qymcad_i18n::stand_for_system_locale(&self.locale);
-        super::apply_language(&self.app.set);
-    }
-
-    /// THE WORDS ON SCREEN once it is at rest.
     pub fn words(&mut self) -> Vec<String> {
         self.settle();
         self.win.drawn.iter().map(|(t, _)| t.clone()).filter(|t| !t.is_empty()).collect()
     }
 
-    /// Is `text` written anywhere on screen, whole, once it is at rest?
     pub fn shows(&mut self, text: &str) -> bool {
         self.settle();
         self.win.drawn.iter().any(|(t, _)| t == text)
     }
 
+    /// THIS CORE'S LANGUAGE ON THIS THREAD again: the machine's locale and the program's own setting.
+    fn speak(&self) {
+        qymcad_i18n::stand_for_system_locale(&self.locale);
+        super::apply_language(&self.app.set);
+    }
+
     /// A STEP IS DONE: the watch of the process, if one is set, looks at the session now.
     fn stepped(&mut self, what: &str) {
-        let Some(watch) = WATCH.get() else { return };
+        let Some(watch) = WATCH.get().copied() else { return };
         if self.watching || self.win.closed || !self.down.is_empty() {
             return;
         }
         self.watching = true;
-        let problems = watch(self);
+        let problems = self.watched(watch);
         self.watching = false;
         assert!(problems.is_empty(), "after {what}, the program is not right:\n{}", problems.join("\n"));
+    }
+
+    /// THE CORE STANDS AS A SESSION for its watch: the watch is told about sessions (`fn(&mut Session)`), so the
+    /// program, the window and the hands move into a session of their own for the call - the same parts, not a
+    /// copy - and back out of it after. The watch sees the session it expects, and what it did to the program
+    /// stays done.
+    fn watched(&mut self, watch: fn(&mut Session) -> Vec<String>) -> Vec<String> {
+        let real = std::mem::replace(self, a_fresh_core());
+        let AgentSession { app, win, budget, pointer, held, last_press, down, locale, watching } = real;
+        // the session of the watch is one of this thread, as a nested session is: the watch may open a chooser and
+        // answer it, and closing its session must not hand the real one the system
+        crate::system::stand_in(true);
+        let mut shell = Session { core: AgentSession { app, win, budget, pointer, held, last_press, down, locale, watching }, kept: Kept::default() };
+        let problems = watch(&mut shell);
+        std::mem::swap(self, &mut shell.core);
+        problems
     }
 
     /// One frame with `events` in it and whatever is held, in a window that is still open.
@@ -1825,7 +1434,7 @@ impl Session {
     /// is first brought nearer by turning the wheel over the middle of it, and then the view is dragged with
     /// `buttons` and `modifiers` held, a part of the canvas at a time. A wheel turn or a drag that took the place
     /// further away is made the other way next time.
-    fn bring_into_view(&mut self, at: &dyn Fn(&Session) -> Pos2, buttons: &[PointerButton], modifiers: Modifiers) {
+    fn bring_into_view(&mut self, at: &dyn Fn(&AgentSession) -> Pos2, buttons: &[PointerButton], modifiers: Modifiers) {
         let (mut drag_sign, mut wheel_sign) = (1.0, -1.0);
         for _ in 0..48 {
             let canvas = self.app.viewing.view_rect;
@@ -1938,15 +1547,92 @@ impl Session {
         egui::Event::PointerButton { pos: at, button, pressed, modifiers }
     }
 
-    /// Answer the chooser that is up.
-    fn answer(&mut self, path: Option<std::path::PathBuf>) -> &mut Self {
+    /// Look for the button with the hint `hint` from where the panel stands now, scrolling downwards.
+    fn look_for_hint(&mut self, hint: &str) -> Option<Pos2> {
         self.settle();
-        let asked = crate::system::with_stand_in(|s| s.asked.take()).flatten();
-        let asked = asked.expect("the program has put up no chooser to answer");
-        asked.tx.send(path).expect("the program stopped waiting for the chooser");
-        self.settle();
-        self.stepped("an answer to the chooser");
-        self
+        let mut scrolled = 0;
+        loop {
+            for at in self.win.plates.clone() {
+                if self.hint_comes_up(at, hint) {
+                    return Some(at);
+                }
+            }
+            // down the panel the buttons stand in, a notch of the wheel at a time
+            let over = self.win.plates.first().copied()?;
+            let before = self.win.plates.clone();
+            self.wheel(over, vec2(0.0, -200.0), Modifiers::default());
+            self.settle();
+            scrolled += 1;
+            if self.win.plates == before || scrolled > 10 {
+                return None; // the panel went no further: there is no such button
+            }
+        }
+    }
+
+    /// Take the pointer off the buttons so no hint is up when they are read: to the empty right end of the menu bar,
+    /// not onto the canvas - there the readout of the coordinates changes as the pointer leaves it again, and its words
+    /// would be read as part of the next hint.
+    fn pointer_off_the_plates(&mut self) {
+        let c = self.canvas();
+        self.move_to(pos2(c.max.x - 8.0, 10.0));
+    }
+
+    /// Where the small buttons of the window stand: an icon, not a tool plate and not a word.
+    fn small_buttons(&mut self) -> Vec<Pos2> {
+        self.widgets().into_iter().filter(|w| matches!(w.kind, crate::gui::window::Kind::Button) && w.rect.width() <= 32.0 && w.rect.height() <= 32.0).map(|w| w.rect.center()).collect()
+    }
+
+    /// TYPE `text` OVER WHAT IS SELECTED - nothing typed clears it, as Backspace does: typing no letters over a
+    /// selection leaves it standing, which is not what a person emptying a field does.
+    fn type_over(&mut self, text: &str) -> &mut Self {
+        if text.is_empty() {
+            self.key(Key::Backspace)
+        } else {
+            self.type_text(text)
+        }
+    }
+
+    /// WHAT OF THE WINDOW STANDS OVER THE CANVAS AT `pos` - a button, a field, a panel - and so takes a click aimed at
+    /// the model there. A widget takes a click that falls within its reach of it, not only on it: 1.4 px above the
+    /// Apply button of a tool's popup the click went to the popup, and the edge under it was not picked.
+    fn covering(&mut self, pos: Pos2) -> Option<Widget> {
+        let canvas = self.app.viewing.view_rect;
+        let reach = self.win.ctx.global_style().interaction.interact_radius;
+        self.win.widgets.iter().find(|w| w.rect.expand(reach).contains(pos) && w.rect != canvas).cloned()
+    }
+
+    /// Everything that waits for a click - a tool in hand, a pick a button started - in words.
+    fn waiting_for_a_click(&self) -> Vec<String> {
+        let app = &self.app;
+        let mut waiting = Vec::new();
+        if app.tools.armed != qymcad_ui_state::Armed::None {
+            waiting.push(format!("the tool {:?}", app.tools.armed));
+        }
+        let joint = &app.side.joint;
+        for (on, what) in [
+            (app.params.mirror.in_hand(), "the plane of a mirrored copy"),
+            (app.side.section.pick, "the plane of a section"),
+            (app.tools.picking.sketch_for().is_some(), "a sketch for a command"),
+            (app.tools.picking.is_sketch_plane(), "the plane of a new sketch"),
+            (app.side.m3.on, "the elements to measure"),
+            (app.tools.picking.fillet_all(), "the shape whose corners are rounded"),
+            (app.side.clip.geom_pending.is_some() || app.side.clip.geom_place, "the base point or the place of a copy"),
+            (app.params.boolean.pick.is_some(), "the second body of a boolean"),
+            (app.params.boolean.edit.is_some(), "the kind of a boolean being edited"),
+            (joint.pick_faces || joint.conn_pick, "an anchor of a joint"),
+            (joint.ground_pick, "a part to ground"),
+            (joint.group_pick.is_some(), "the parts of a group"),
+            (joint.width_pick.is_some(), "the walls of a width"),
+            (joint.tangent_pick.is_some(), "the surfaces of a tangent"),
+            (joint.axis_pick.is_some(), "the axis of an anchor"),
+            (joint.edit_repick.is_some(), "a new anchor of a joint"),
+            (joint.relation_pick.is_some(), "the joints of a relation"),
+        ] {
+            if on {
+                waiting.push(what.to_string());
+            }
+        }
+        waiting
     }
 
     /// WHAT KEEPS THE PROGRAM FROM REST, in words; empty when it is quiet.
@@ -1977,6 +1663,753 @@ impl Session {
             still.push(format!("the screen is still moving (a frame asked again in {:?})", self.win.repaint));
         }
         still
+    }
+}
+
+/// A CORE OF A FRESH PROGRAM: what stands in the driven core's place while its parts make a session for the
+/// watch. Nothing of it is read - it is swapped away again before any frame runs.
+fn a_fresh_core() -> AgentSession {
+    AgentSession {
+        app: Box::new(App::default()),
+        win: Window::new(egui::Vec2::ZERO),
+        budget: Duration::from_secs(120),
+        pointer: None,
+        held: Modifiers::default(),
+        last_press: f64::NEG_INFINITY,
+        down: Vec::new(),
+        locale: String::new(),
+        watching: false,
+    }
+}
+
+impl Session {
+    /// START THE PROGRAM on a machine of its defaults, and wait until it is ready for a person.
+    pub fn start() -> Session {
+        Session::start_on(Machine::default())
+    }
+
+    /// START THE PROGRAM on `machine`, the way the window starts it, and wait until it is ready for a person.
+    ///
+    /// # Panics
+    /// When `machine.home` is not the home of the sessions started before in this process: the program's own
+    /// folders are one per process.
+    pub fn start_on(machine: Machine) -> Session {
+        assert!(qymcad_paths::keep_under(machine.home.clone()), "one process keeps one home for the program; {} was asked for after another", machine.home.display());
+        super::prepare_the_process();
+        qymcad_i18n::stand_for_system_locale(&machine.locale);
+        crate::system::stand_in(true);
+        let win = Window::new(egui::vec2(machine.screen.0, machine.screen.1));
+        let app = Box::new(super::start_the_program(&win.ctx, Some(&machine.kept)));
+        let mut session = Session {
+            core: AgentSession {
+                app,
+                win,
+                budget: Duration::from_secs(120),
+                pointer: None,
+                held: Modifiers::default(),
+                last_press: f64::NEG_INFINITY,
+                down: Vec::new(),
+                locale: machine.locale,
+                watching: false,
+            },
+            kept: machine.kept,
+        };
+        if !machine.greeting {
+            // the greeting has been on screen for its time: it goes on the first frame, through its own branch
+            session.core.app.waiting.splash_until = Some(Instant::now());
+        }
+        session.core.settle();
+        session
+    }
+
+    /// A MACHINE LIKE THIS SESSION'S: its locale and its settings as they are now, for a second start of the program
+    /// that reads what this one wrote in the same language.
+    pub fn same_machine(&self) -> Machine {
+        let mut kept = Kept::default();
+        eframe::set_value(&mut kept, "settings", &self.core.app.set);
+        Machine { locale: self.core.locale.clone(), kept, ..Machine::default() }
+    }
+
+    /// CLOSE THE WINDOW as a person does, with its cross, and keep what the program keeps on the way out.
+    ///
+    /// A program with unsaved work refuses to close and asks what to do with it; then the session is given back,
+    /// still running, with the question on screen.
+    pub fn quit(mut self) -> Result<Kept, Box<Session>> {
+        if !self.core.win.closed {
+            self.core.settle();
+            self.core.speak();
+            self.core.win.run(&mut self.core.app, egui::Modifiers::default(), Vec::new(), true);
+            if self.core.win.close_refused && !self.core.win.closed {
+                self.core.settle();
+                return Err(Box::new(self));
+            }
+        }
+        eframe::App::save(&mut *self.core.app, &mut self.kept);
+        Ok(std::mem::take(&mut self.kept))
+    }
+
+    /// HAS THE PROGRAM CLOSED ITS WINDOW by itself - Quit, or an answer to the question it asked on closing?
+    /// What it keeps is then taken by [`Session::quit`].
+    pub fn closed(&self) -> bool {
+        self.core.win.closed
+    }
+
+    /// LOOK AT EVERY STEP OF EVERY SESSION OF THIS PROCESS with `watch`: after each gesture - a click, a key, a drag,
+    /// typing, an answer to a chooser - the watch is run on the session, and a problem it answers fails the check at
+    /// that step. Set once per process; `false` when another watch was set first.
+    pub fn watch_every_step(watch: fn(&mut Session) -> Vec<String>) -> bool {
+        WATCH.set(watch).is_ok()
+    }
+
+    /// HOW LONG ONE WAIT MAY TAKE before the check fails, naming what was still running. Two minutes unless said.
+    pub fn budget(&mut self, budget: Duration) -> &mut Self {
+        self.core.budget(budget);
+        self
+    }
+
+    /// WAIT UNTIL THE PROGRAM IS QUIET, as a person waits: frames go on being drawn until no rebuild, load or
+    /// write is under way and nothing on screen is still moving.
+    ///
+    /// # Panics
+    /// When the budget runs out first, with what was still running.
+    pub fn settle(&mut self) -> &mut Self {
+        self.core.settle();
+        self
+    }
+
+    /// WAIT FOR `what` TO HAPPEN, as a person does - frames drawn, the clock on the wall moving - until `happened` says
+    /// it has, for no longer than `deadline`. A probe that slept a fixed span and then looked passed on a fast machine
+    /// and went red now and then on a runner of the CI, where the same work came later: an autosave of 1 s and an
+    /// extrude did not fit in 2.5 s there. The deadline is the bound of a fault, not of a slow machine.
+    ///
+    /// # Panics
+    /// When `deadline` passes first, naming what was waited for.
+    pub fn wait_for(&mut self, what: &str, deadline: Duration, mut happened: impl FnMut(&mut Self) -> bool) -> &mut Self {
+        let began = Instant::now();
+        while !happened(self) {
+            assert!(began.elapsed() < deadline, "waited {deadline:?} for {what}, and it did not happen");
+            assert!(!self.core.win.closed, "the window closed while waiting for {what}");
+            std::thread::sleep(Duration::from_millis(16));
+            self.core.frame(Vec::new());
+        }
+        self.settle()
+    }
+
+    /// LET `span` OF REAL TIME PASS with the window drawing its frames, as a person waits with the program in front
+    /// of them: what the program times by the clock on the wall - autosave, the turn of the view - moves on too.
+    pub fn pause(&mut self, span: Duration) -> &mut Self {
+        self.core.pause(span);
+        self
+    }
+
+    /// BRING THE POINTER TO `at`.
+    pub fn move_to(&mut self, at: Pos2) -> &mut Self {
+        self.core.move_to(at);
+        self
+    }
+
+    /// PRESS `button` where the pointer stands.
+    ///
+    /// # Panics
+    /// When the pointer has not come over the window yet.
+    pub fn press(&mut self, button: PointerButton) -> &mut Self {
+        self.core.press(button);
+        self
+    }
+
+    /// LET GO OF `button` where the pointer stands.
+    ///
+    /// # Panics
+    /// When the pointer has not come over the window yet.
+    pub fn release(&mut self, button: PointerButton) -> &mut Self {
+        self.core.release(button);
+        self
+    }
+
+    /// CLICK THE LEFT BUTTON at `at`.
+    pub fn click(&mut self, at: Pos2) -> &mut Self {
+        self.core.click(at);
+        self
+    }
+
+    /// CLICK `button` at `at` with `modifiers` held for the click.
+    pub fn click_with(&mut self, at: Pos2, button: PointerButton, modifiers: Modifiers) -> &mut Self {
+        self.core.click_with(at, button, modifiers);
+        self
+    }
+
+    /// DOUBLE-CLICK THE LEFT BUTTON at `at`: two clicks a few frames apart, well inside the time a double click
+    /// is allowed.
+    pub fn double_click(&mut self, at: Pos2) -> &mut Self {
+        self.core.double_click(at);
+        self
+    }
+
+    /// DRAG WITH `button` from `from` to `to`, `modifiers` held: pressed, carried over in even steps a frame
+    /// each, and let go.
+    pub fn drag(&mut self, from: Pos2, to: Pos2, button: PointerButton, modifiers: Modifiers) -> &mut Self {
+        self.core.drag(from, to, button, modifiers);
+        self
+    }
+
+    /// DRAG WITH SEVERAL BUTTONS AT ONCE, all of them held from `from` to `to`; no button at all is a movement
+    /// with only `modifiers` down, the way a touchpad moves the view.
+    pub fn drag_with(&mut self, from: Pos2, to: Pos2, buttons: &[PointerButton], modifiers: Modifiers) -> &mut Self {
+        self.core.drag_with(from, to, buttons, modifiers);
+        self
+    }
+
+    /// TURN THE WHEEL with the pointer at `at`, by `delta` points (positive `y` is away from the person, which
+    /// scrolls up), `modifiers` held.
+    pub fn wheel(&mut self, at: Pos2, delta: Vec2, modifiers: Modifiers) -> &mut Self {
+        self.core.wheel(at, delta, modifiers);
+        self
+    }
+
+    /// HOLD `modifiers` DOWN until [`Session::let_go`], across every gesture in between.
+    pub fn hold(&mut self, modifiers: Modifiers) -> &mut Self {
+        self.core.hold(modifiers);
+        self
+    }
+
+    /// Let go of every key held down.
+    pub fn let_go(&mut self) -> &mut Self {
+        self.core.let_go();
+        self
+    }
+
+    /// PRESS AND RELEASE `key`, with whatever is held.
+    pub fn key(&mut self, key: Key) -> &mut Self {
+        self.core.key(key);
+        self
+    }
+
+    /// PRESS AND RELEASE `key` with `modifiers` down: Ctrl+K is `chord(Modifiers::COMMAND, Key::K)`.
+    pub fn chord(&mut self, modifiers: Modifiers, key: Key) -> &mut Self {
+        self.core.chord(modifiers, key);
+        self
+    }
+
+    /// TYPE `text` on the keyboard, into whatever holds the keyboard.
+    pub fn type_text(&mut self, text: &str) -> &mut Self {
+        self.core.type_text(text);
+        self
+    }
+
+    /// PASTE `text` from the clipboard, as Ctrl+V does.
+    pub fn paste(&mut self, text: &str) -> &mut Self {
+        self.core.paste(text);
+        self
+    }
+
+    /// COPY, as Ctrl+C does; what reached the clipboard is in [`Session::clipboard`].
+    pub fn copy(&mut self) -> &mut Self {
+        self.core.copy();
+        self
+    }
+
+    /// CUT, as Ctrl+X does.
+    pub fn cut(&mut self) -> &mut Self {
+        self.core.cut();
+        self
+    }
+
+    /// WHICH CHOOSER THE PROGRAM HAS PUT UP and waits on, if any.
+    pub fn chooser(&mut self) -> Option<Chooser> {
+        self.core.settle();
+        crate::system::with_stand_in(|s| s.asked.as_ref().map(|a| a.kind)).flatten()
+    }
+
+    /// THE FOLDER THE CHOOSER THAT IS UP OPENS IN; `None` when no chooser is up or it leaves the folder to the
+    /// system.
+    pub fn chooser_folder(&mut self) -> Option<std::path::PathBuf> {
+        self.core.settle();
+        crate::system::with_stand_in(|s| s.asked.as_ref().and_then(|a| a.folder.clone())).flatten()
+    }
+
+    /// ANSWER THE CHOOSER with `path`, as a person picks a file in it.
+    ///
+    /// # Panics
+    /// When no chooser is up.
+    pub fn answer_file(&mut self, path: impl AsRef<std::path::Path>) -> &mut Self {
+        self.answer(Some(path.as_ref().to_path_buf()))
+    }
+
+    /// CLOSE THE CHOOSER without choosing.
+    ///
+    /// # Panics
+    /// When no chooser is up.
+    pub fn cancel_file(&mut self) -> &mut Self {
+        self.answer(None)
+    }
+
+    /// WHAT THE PROGRAM ASKED THE SYSTEM TO START - a file manager, a browser - with its arguments, in order.
+    pub fn started(&self) -> Vec<(String, Vec<String>)> {
+        crate::system::with_stand_in(|s| s.started.clone()).unwrap_or_default()
+    }
+
+    /// WHAT REACHED THE CLIPBOARD, oldest first.
+    pub fn clipboard(&self) -> &[String] {
+        self.core.clipboard()
+    }
+
+    /// The pages the program asked the system to open, oldest first.
+    pub fn opened_pages(&self) -> &[String] {
+        self.core.opened_pages()
+    }
+
+    /// RESIZE THE WINDOW to `size` points.
+    pub fn resize(&mut self, size: Vec2) -> &mut Self {
+        self.core.resize(size);
+        self
+    }
+
+    /// The size of the window, in points.
+    pub fn screen(&self) -> Vec2 {
+        self.core.screen()
+    }
+
+    /// WHERE `text` IS WRITTEN ON SCREEN, whole - the place nearest to `near` when it is written in several.
+    pub fn find(&mut self, text: &str, near: Pos2) -> Option<Rect> {
+        self.core.find(text, near)
+    }
+
+    /// PRESS WHERE `text` IS WRITTEN - a menu item, a tree row, a button with a caption.
+    ///
+    /// # Panics
+    /// When `text` is not on screen, or is written in more than one place: then [`Session::press_word_near`] says
+    /// which one.
+    pub fn press_word(&mut self, text: &str) -> &mut Self {
+        self.core.press_word(text);
+        self
+    }
+
+    /// PRESS WHERE `text` IS WRITTEN, the place nearest to `near` when it is written in several.
+    ///
+    /// # Panics
+    /// When `text` is not on screen.
+    pub fn press_word_near(&mut self, text: &str, near: Pos2) -> &mut Self {
+        self.core.press_word_near(text, near);
+        self
+    }
+
+    /// WHERE THE SIDE PANEL `id` STANDS, as the last frame laid it out: its outer rectangle, the divider at its edge.
+    /// `None` when no such panel was drawn.
+    pub fn panel(&mut self, id: &str) -> Option<Rect> {
+        self.core.panel(id)
+    }
+
+    /// WHAT THE LAST FRAME PAINTED that a person reads as content: every run of words, and every filled background of
+    /// one row's height - a highlight, a button - named "a filled background". The ground of a whole area is left out.
+    pub fn painted(&mut self) -> Vec<(Rect, String)> {
+        self.core.painted()
+    }
+
+    /// GO DOWN A MENU: press each of `path` in turn, each nearest to the one pressed before it.
+    ///
+    /// # Panics
+    /// When an item of the path is not on screen.
+    pub fn menu(&mut self, path: &[&str]) -> &mut Self {
+        self.core.menu(path);
+        self
+    }
+
+    /// PRESS THE BUTTON WHOSE HINT IS `hint`, found as a person finds an icon they do not know: the pointer goes
+    /// over the buttons and rests until the hint comes up; a panel longer than the window is scrolled with the
+    /// wheel.
+    ///
+    /// # Panics
+    /// When no button of the window has that hint.
+    pub fn press_hint(&mut self, hint: &str) -> &mut Self {
+        self.core.press_hint(hint);
+        self
+    }
+
+    /// WHERE THE BUTTON WITH THE HINT `hint` IS, looked for as [`Session::press_hint`] looks; `None` when no
+    /// button has it.
+    pub fn find_hint(&mut self, hint: &str) -> Option<Pos2> {
+        self.core.find_hint(hint)
+    }
+
+    /// THE HINTS OF THE SMALL ICON BUTTONS OUTSIDE THE TOOL PLATES - the cross beside a line of the properties - read
+    /// as the plates are: the pointer rests over each in turn. A button without a hint is left out.
+    pub fn icon_hints(&mut self) -> Vec<String> {
+        self.core.icon_hints()
+    }
+
+    /// THE HINT OF EVERY TOOL BUTTON OF THE WINDOW, read as a person reads them: the pointer rests over each button in
+    /// turn, and a panel longer than the window is scrolled with the wheel. A button without a hint is given as empty.
+    pub fn button_hints(&mut self) -> Vec<String> {
+        self.core.button_hints()
+    }
+
+    /// THE HINT OF WHAT IS UNDER `at`, read as it comes up after the pointer rests there; `None` when nothing
+    /// new comes up.
+    pub fn hint_at(&mut self, at: Pos2) -> Vec<String> {
+        self.core.hint_at(at)
+    }
+
+    /// EVERY WIDGET ON SCREEN once it is at rest, as the window describes them to a screen reader.
+    pub fn widgets(&mut self) -> Vec<Widget> {
+        self.core.widgets()
+    }
+
+    /// THE FIELD A PERSON FILLS UNDER THE CAPTION `label`: the text field, spin box, list or checkbox that stands
+    /// nearest after the caption - on its row to the right first, below it otherwise.
+    ///
+    /// # Panics
+    /// When `label` is not on screen or nothing to fill stands after it.
+    pub fn field(&mut self, label: &str) -> Widget {
+        self.core.field(label)
+    }
+
+    /// FILL THE FIELD under the caption `label` with `text`: click into it, select what is there, type over it.
+    /// Nothing is pressed after - Enter and Tab are the check's to press.
+    pub fn fill(&mut self, label: &str, text: &str) -> &mut Self {
+        self.core.fill(label, text);
+        self
+    }
+
+    /// FILL THE EMPTY FIELD that shows `placeholder` in grey - the name of a new row, say - with `text`.
+    ///
+    /// # Panics
+    /// When no empty field shows it, or more than one does.
+    pub fn fill_empty(&mut self, placeholder: &str, text: &str) -> &mut Self {
+        self.core.fill_empty(placeholder, text);
+        self
+    }
+
+    /// FILL THE FIELD THAT SHOWS `placeholder` in grey - a field of a dimension holds a number and still shows what it
+    /// would take - with `text`, over what it holds.
+    ///
+    /// # Panics
+    /// When no field shows it, or more than one does.
+    pub fn fill_hinted(&mut self, placeholder: &str, text: &str) -> &mut Self {
+        self.core.fill_hinted(placeholder, text);
+        self
+    }
+
+    /// FILL THE FIRST FIELD, in reading order, THAT SHOWS `placeholder` in grey with `text`, over what it holds: the
+    /// first value of a bar that holds two fields of the same grey words - the size of a chamfer and its second leg.
+    ///
+    /// # Panics
+    /// When no field shows it.
+    pub fn fill_first_hinted(&mut self, placeholder: &str, text: &str) -> &mut Self {
+        self.core.fill_first_hinted(placeholder, text);
+        self
+    }
+
+    /// TICK OR UNTICK THE CHECKBOX whose words are `label`.
+    ///
+    /// # Panics
+    /// When no checkbox has those words.
+    pub fn toggle(&mut self, label: &str) -> &mut Self {
+        self.core.toggle(label);
+        self
+    }
+
+    /// THE CANVAS - the sketch sheet or the 3D view - where the window laid it out.
+    pub fn canvas(&mut self) -> Rect {
+        self.core.canvas()
+    }
+
+    /// WHERE THE POINT (x, y) OF THE SKETCH OPEN FOR EDITING STANDS ON SCREEN, on the canvas as the window laid it
+    /// out. A point out of view is brought into it first, the way a person does it: the sheet is dragged with the
+    /// middle button.
+    ///
+    /// # Panics
+    /// When no sketch is open on the flat canvas, or the point cannot be brought into view.
+    pub fn on_sketch(&mut self, x: f64, y: f64) -> Pos2 {
+        self.core.on_sketch(x, y)
+    }
+
+    /// WHERE THE POINT (x, y) OF THE FLAT SHEET IS CLICKED, whatever sketch the sheet shows - one open for editing, or
+    /// a finished one a tool lays flat for its contours to be picked - brought into view as [`Session::on_sketch`]
+    /// brings it.
+    ///
+    /// # Panics
+    /// When the canvas is not the flat sheet, or the point cannot be brought into view.
+    pub fn on_sheet(&mut self, x: f64, y: f64) -> Pos2 {
+        self.core.on_sheet(x, y)
+    }
+
+    /// WHERE THE POINT (x, y) OF THE OPEN SKETCH IS SEEN NOW, with the sheet left as it stands - what the eye reads
+    /// off the screen while the sheet is moved or scaled. `None` when it falls outside the canvas or no sketch is open
+    /// on the flat canvas. Unlike [`Session::on_sketch`] it moves nothing.
+    pub fn seen_on_sketch(&mut self, x: f64, y: f64) -> Option<Pos2> {
+        self.core.seen_on_sketch(x, y)
+    }
+
+    /// CLICK THE POINT (x, y) OF THE OPEN SKETCH, brought into view as [`Session::on_sketch`] brings it.
+    pub fn click_on_sketch(&mut self, x: f64, y: f64) -> &mut Self {
+        self.core.click_on_sketch(x, y);
+        self
+    }
+
+    /// DRAG ON THE OPEN SKETCH from the point `from` to the point `to` with the left button: both are brought into
+    /// view together first - a place worked out before the view moved is a place on another part of the sheet.
+    ///
+    /// # Panics
+    /// When no sketch is open, or the two points do not fit on the canvas at once.
+    pub fn drag_on_sketch(&mut self, from: (f64, f64), to: (f64, f64)) -> &mut Self {
+        self.core.drag_on_sketch(from, to);
+        self
+    }
+
+    /// THE GLYPH OF THE SNAP SHOWN AT THE POINTER, as the frame draws it - none where the pointer snaps to nothing a
+    /// click would be tied to.
+    pub fn snap_glyph(&mut self) -> Option<SnapGlyph> {
+        self.core.snap_glyph()
+    }
+
+    /// THE BADGES OF THE CONSTRAINTS DRAWN ON THE OPEN SKETCH, as the frame draws them; none outside a sketch.
+    pub fn badges(&mut self) -> Vec<Badge> {
+        self.core.badges()
+    }
+
+    /// WHAT A CLICK AT (x, y) OF THE OPEN SKETCH WOULD TAKE, brought into view as [`Session::on_sketch`] does.
+    pub fn sketch_under(&mut self, x: f64, y: f64) -> Option<SketchPick> {
+        self.core.sketch_under(x, y)
+    }
+
+    /// WHERE THE POINT `p` OF THE 3D VIEW FALLS ON SCREEN AS THE VIEW STANDS NOW - no gesture, nothing brought into view,
+    /// covered or not: to see whether the view shows the whole of something.
+    pub fn projected(&mut self, p: [f64; 3]) -> Pos2 {
+        self.core.projected(p)
+    }
+
+    /// WHERE THE POINT `p` OF THE 3D VIEW STANDS ON SCREEN, brought into view first with the gesture that moves
+    /// the view under the person's mouse settings.
+    ///
+    /// # Panics
+    /// When the view is not 3D, the point cannot be brought into view, or something nearer to the eye covers it.
+    pub fn in_space(&mut self, p: [f64; 3]) -> Pos2 {
+        self.core.in_space(p)
+    }
+
+    /// WHERE THE POINT `p` OF THE WORLD IS SEEN NOW, with the view left as it stands - what the eye reads off the
+    /// screen while the view is being turned, moved or scaled. `None` when it falls outside the canvas or the
+    /// canvas is the flat sheet. Unlike [`Session::in_space`] it moves nothing.
+    pub fn seen_at(&mut self, p: [f64; 3]) -> Option<Pos2> {
+        self.core.seen_at(p)
+    }
+
+    /// WHERE THE SIDE OF THE NAVIGATION CUBE THAT READS `side` IS CLICKED - TOP, FRONT and the rest. The captions
+    /// of the cube are baked into the drawing of it, so they stand on no word of the screen; the eye reads them off
+    /// the cube all the same. `None` when no side reads that.
+    pub fn cube_side(&mut self, side: &str) -> Option<Pos2> {
+        self.core.cube_side(side)
+    }
+
+    /// WHERE THE NAVIGATION CUBE IS CLICKED TO LOOK FROM `dir` - the way from the model to the eye, each coordinate
+    /// -1, 0 or 1: a side of the cube for one axis, an edge of it for two, a corner for three. `None` when that part
+    /// of the cube is on its far side, out of the eye's reach, as it stands now: a person turns the cube to it first.
+    pub fn cube_toward(&mut self, dir: [i8; 3]) -> Option<Pos2> {
+        self.core.cube_toward(dir)
+    }
+
+    /// CAN THE POINT `p` OF SPACE BE SEEN AS THE VIEW STANDS: on the canvas, and no face nearer to the eye covers it.
+    /// The view is not moved.
+    pub fn sees(&mut self, p: [f64; 3]) -> bool {
+        self.core.sees(p)
+    }
+
+    /// WHERE THE GIZMO OF WHAT IS CHOSEN STANDS: the arms to carry it and the rings to turn it. `None` when what
+    /// is chosen carries no gizmo, or the canvas is the flat sheet.
+    pub fn gizmo(&mut self) -> Option<Gizmo> {
+        self.core.gizmo()
+    }
+
+    /// IS THE CANVAS THE FLAT SHEET? - the sketch drawn flat before the eye, rather than the model in space.
+    pub fn flat(&mut self) -> bool {
+        self.core.flat()
+    }
+
+    /// WHERE A FACE THROUGH `p` IS CLICKED: the point in view, and a click there takes a face through `p`.
+    ///
+    /// # Panics
+    /// As [`Session::in_space`] does, and when the surface under the pointer does not pass through `p`.
+    pub fn face_at(&mut self, p: [f64; 3]) -> Pos2 {
+        self.core.face_at(p)
+    }
+
+    /// WHERE AN EDGE THROUGH `p` IS CLICKED: the point in view, and the edge the pointer takes passes through `p`.
+    ///
+    /// # Panics
+    /// As [`Session::in_space`] does, and when the edge under the pointer does not pass through `p`.
+    pub fn edge_at(&mut self, p: [f64; 3]) -> Pos2 {
+        self.core.edge_at(p)
+    }
+
+    /// WHERE THE VERTEX `p` IS CLICKED: the point in view, and the vertex the pointer takes is `p`.
+    ///
+    /// # Panics
+    /// As [`Session::in_space`] does, and when the vertex under the pointer is not `p`.
+    pub fn vertex_at(&mut self, p: [f64; 3]) -> Pos2 {
+        self.core.vertex_at(p)
+    }
+
+    /// `f` DONE ASIDE: what is chosen and the status line are as they were when it returns - for a check that makes
+    /// steps of its own between the steps of a person (taking a step back and putting it again, rebuilding
+    /// everything) and must leave the next step of the person where the last one left it.
+    pub fn aside<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let (sel, multi, status) = (self.core.app.chosen.sel, self.core.app.chosen.tree_sel.multi.clone(), self.core.app.status.clone());
+        let out = f(self);
+        (self.core.app.chosen.sel, self.core.app.chosen.tree_sel.multi, self.core.app.status) = (sel, multi, status);
+        out
+    }
+
+    /// HOW MANY THINGS OF THE SKETCH STAND LIT - the count a person would count by eye.
+    pub fn lit_in_sketch(&self) -> usize {
+        self.core.lit_in_sketch()
+    }
+
+    /// WHICH EDITING BUTTON IS IN HAND, by its own number: 4 the corner fillet, 5 the chamfer, 0 none of them.
+    pub fn editing_tool(&self) -> u8 {
+        self.core.editing_tool()
+    }
+
+    /// Is a text field taking the keys - a person in the middle of typing, where Ctrl+Z is the field's own?
+    pub fn typing(&self) -> bool {
+        self.core.typing()
+    }
+
+    /// Is the program asking for a file - a chooser up and waiting for its answer?
+    pub fn asking_for_a_file(&self) -> bool {
+        self.core.asking_for_a_file()
+    }
+
+    /// A COPY OF THE DOCUMENT WRITTEN TO `path`, the document keeping its own place and name - what a check of saving and
+    /// opening needs in the middle of a session without changing the session it checks.
+    pub fn save_copy(&mut self, path: &str) -> Result<(), String> {
+        self.core.settle();
+        // the live bodies go with it, as File -> Save writes them
+        let live = &self.core.app.live;
+        let breps: Vec<(qymcad_core::model::Id, Vec<u8>)> = live.shapes.iter().filter_map(|(id, sh)| live.blobs.get(id).cloned().or_else(|| sh.to_brep_bytes()).map(|b| (*id, b))).collect();
+        qymcad_io::save_project_guarded_with_brep(&self.core.app.project, path, &breps).map_err(|e| e.to_string())
+    }
+
+    /// THE DOCUMENT once the program is at rest.
+    pub fn document(&mut self) -> Document {
+        self.core.document()
+    }
+
+    /// WHAT THE EXACT BODY NUMBERED `body` IN [`Document::bodies`] IS MADE OF; `None` while the program holds no exact
+    /// body for it (a mesh brought in as it is) or the kernel cannot read it.
+    pub fn inspect(&mut self, body: usize) -> Option<Inspection> {
+        self.core.inspect(body)
+    }
+
+    /// HOW THE 3D VIEW DRAWS EACH PIECE OF WHAT IT SHOWS on a screen with a graphics card: the colour of the row of
+    /// the table of looks its vertices name, and whether that row is painted as selected. It is what a person sees -
+    /// the picture of [`Session::snapshot`] draws the space another way and cannot show what the card is handed.
+    pub fn drawn(&mut self) -> Vec<([u8; 3], bool)> {
+        self.core.drawn()
+    }
+
+    /// THE STATUS LINE once the program is at rest.
+    pub fn status(&mut self) -> String {
+        self.core.status()
+    }
+
+    /// THE WINDOWS OPEN INSIDE THE PROGRAM, by their titles.
+    pub fn windows(&mut self) -> Vec<String> {
+        self.core.windows()
+    }
+
+    /// WHAT IS IN HAND, as the bars of options across the top say it: the words written in every bar a tool or a
+    /// command has put up. Empty when nothing is.
+    pub fn in_hand(&mut self) -> Vec<String> {
+        self.core.in_hand()
+    }
+
+    /// EVERY WORD ON SCREEN AND WHERE IT STANDS, once the screen is at rest.
+    pub fn words_at(&mut self) -> Vec<(String, Rect)> {
+        self.core.words_at()
+    }
+
+    /// A PICTURE OF THE WINDOW once it is at rest, drawn on the processor from what the last frame drew.
+    pub fn snapshot(&mut self) -> Picture {
+        self.core.snapshot()
+    }
+
+    /// CLOSE THE WINDOW TITLED `title` INSIDE THE PROGRAM with the cross on its title bar.
+    ///
+    /// # Panics
+    /// When no such window is open, or it has no cross.
+    pub fn close_window(&mut self, title: &str) -> &mut Self {
+        self.core.close_window(title);
+        self
+    }
+
+    /// THE LONGEST A FRAME TOOK SINCE THE LAST STEP WAS WATCHED, in wall time; asking starts the count again.
+    pub fn step_frame(&mut self) -> Duration {
+        self.core.step_frame()
+    }
+
+    /// THE WORDS ON SCREEN THAT ARE KEYS OF THE CATALOGUE, not words: a key is what the program shows when it has no
+    /// string for it, and a person reads `feat-name-extrude` where a name should be.
+    pub fn words_that_are_keys(&mut self) -> Vec<String> {
+        self.core.words_that_are_keys()
+    }
+
+    /// THE WORDS DRAWN WITH A LETTER THE FONT DOES NOT HAVE - a person sees a box in its place - once the screen is at
+    /// rest.
+    pub fn words_without_glyphs(&mut self) -> Vec<String> {
+        self.core.words_without_glyphs()
+    }
+
+    /// WHAT WAITS FOR A CLICK WITH NO BAR OF OPTIONS SAYING SO: a tool in hand, or a pick a button started, while no
+    /// bar a tool or a command puts up is on screen. `None` when there is nothing, or its bar is up.
+    pub fn waiting_without_bar(&mut self) -> Option<String> {
+        self.core.waiting_without_bar()
+    }
+
+    /// A BAR OF OPTIONS WITH NOTHING IN HAND: its words, while no tool, no pick, no sketch open, no section, no pattern
+    /// of components and no joint being edited stands behind it. `None` when there is no such bar.
+    pub fn bar_with_nothing_in_hand(&mut self) -> Option<Vec<String>> {
+        self.core.bar_with_nothing_in_hand()
+    }
+
+    /// THE LONGEST A FRAME TOOK since this was last asked, in wall time; asking starts the count again.
+    pub fn worst_frame(&mut self) -> Duration {
+        self.core.worst_frame()
+    }
+
+    /// THE TITLE OF THE WINDOW, as the program last set it.
+    pub fn title(&mut self) -> String {
+        self.core.title()
+    }
+
+    /// The words a person reads in the program's language for the catalogue entry `key`.
+    pub fn word(&self, key: &str) -> String {
+        self.core.word(key)
+    }
+
+    /// THE CODE OF THE LANGUAGE the program speaks (`en`, `ru`).
+    pub fn language(&self) -> String {
+        self.core.language()
+    }
+
+    /// THE WORDS ON SCREEN once it is at rest.
+    pub fn words(&mut self) -> Vec<String> {
+        self.core.words()
+    }
+
+    /// Is `text` written anywhere on screen, whole, once it is at rest?
+    pub fn shows(&mut self, text: &str) -> bool {
+        self.core.shows(text)
+    }
+
+    /// Answer the chooser that is up.
+    fn answer(&mut self, path: Option<std::path::PathBuf>) -> &mut Self {
+        self.core.settle();
+        let asked = crate::system::with_stand_in(|s| s.asked.take()).flatten();
+        let asked = asked.expect("the program has put up no chooser to answer");
+        asked.tx.send(path).expect("the program stopped waiting for the chooser");
+        self.core.settle();
+        self.core.stepped("an answer to the chooser");
+        self
     }
 }
 

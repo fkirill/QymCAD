@@ -1,6 +1,6 @@
 ## 1. The borrowable driving core (the riskiest patch, first and alone)
 
-- [ ] 1.1 Move `Session`'s gesture, pacing and read-out machinery into a core holding `&mut App` + `Window`, keeping `Session`'s public API byte-identical as a delegating owner; run the whole acceptance suite and `cargo test --workspace` green on the movement alone, in its own commit
+- [x] 1.1 Move `Session`'s gesture, pacing and read-out machinery into a core holding `&mut App` + `Window`, keeping `Session`'s public API byte-identical as a delegating owner; run the whole acceptance suite and `cargo test --workspace` green on the movement alone, in its own commit
 - [ ] 1.2 Expose the core publicly as `qymcad::AgentSession` (no stand-in, no own `App`), with its own doc-comment saying what it is for; check: a test in `qymcad` drives a `App::default()` through `AgentSession` the way `Hand` does and gets the same fillet the hand's own check gets
 - [ ] 1.3 Expose the command-catalogue data (codes, names, launches, workbenches) for derivation outside the crate; check: a test reads every catalogue entry through the new door
 
