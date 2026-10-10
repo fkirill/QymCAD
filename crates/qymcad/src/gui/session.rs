@@ -18,6 +18,10 @@ use super::window::Window;
 use super::App;
 
 pub use crate::system::Chooser;
+/// THE COMMAND CATALOGUE - the one source the search, the panel and the keys read - handed out for deriving
+/// the agent's tool registry from. The names come through `Command::name` and `Command::name_in`, each in the
+/// language asked for.
+pub use crate::command_catalog::{Command, Launch, COMMANDS};
 pub use egui::{pos2, vec2, Key, Modifiers, PointerButton, Pos2, Rect, Vec2};
 
 /// THE MACHINE THE PROGRAM IS STARTED ON.

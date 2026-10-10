@@ -196,4 +196,18 @@ mod tests {
             assert!(matches!(launch, Some(Launch::Feat(k)) if k == button), "{code} launches {launch:?}, its button takes kind {button}");
         }
     }
+
+    /// THE CATALOGUE IS READABLE FROM OUTSIDE THE CRATE: every command - its code, its workbench, its launch,
+    /// its name in a language - comes through the door the agent's tool registry is derived from, whole.
+    #[test]
+    fn the_catalogue_is_readable_through_the_door() {
+        let door = crate::COMMANDS;
+        assert!(!door.is_empty(), "the door carries no commands at all");
+        for c in door {
+            assert!(c.code.contains('.'), "{:?} carries no area in its code", c.code);
+            assert!(["sketch", "part", "assembly"].contains(&c.workbench), "{:?} stands in no workbench", c.code);
+            assert!(!c.name().is_empty(), "{:?} has no name", c.code);
+            assert!(!c.name_in("en").is_empty() && !c.name_in("ru").is_empty(), "{:?} is named in neither language", c.code);
+        }
+    }
 }
