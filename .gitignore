@@ -55,5 +55,10 @@ packaging/flatpak/cargo-sources.json
 # Personal notes for the coding assistant, kept on the owner's machine
 CLAUDE.local.md
 
+# Skills, commands and agents of the coding assistants that work in this tree (ZCode, Codex):
+# they belong to the machine and its tools, not to the project
+.zcode/
+.codex/
+
 # Samples that cannot be distributed: a link to them in a working copy, checks pass them over when absent
 /samples
