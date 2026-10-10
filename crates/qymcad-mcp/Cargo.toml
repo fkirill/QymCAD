@@ -1,0 +1,22 @@
+[package]
+name = "qymcad-mcp"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "The agent's server: the MCP protocol over the program's session door, on the loopback interface, one agent for the hosted document"
+publish = false
+
+# THE PROTOCOL'S WEIGHT LIVES IN THIS CRATE and is seen by nothing else in the tree: rmcp brings tokio and
+# the HTTP stack with it, and the main thread stays winit's - the runtime runs on the server thread only.
+# rmcp 3.5.1 (the official Rust SDK) declares rust-version 1.88, the workspace floor exactly, verified
+# before adoption; its streamable-HTTP server feature is the one transport that fits a server inside an
+# already-running program (stdio would require the client to spawn the program).
+[dependencies]
+qymcad = { path = "../qymcad" }
+rmcp = { version = "3.5.1", features = ["transport-streamable-http-server"] }
+
+[lints]
+workspace = true

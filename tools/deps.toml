@@ -150,3 +150,7 @@ what = "вшивание значка в .exe под Windows"
 [zip]
 latest = "8.6.0"
 what = "СВЁРТКА ДОКУМЕНТА .qcad и деталей .qpart"
+
+[rmcp]
+latest = "3.5.1"
+what = "сервер MCP (официальный Rust SDK): streamable HTTP на loopback, токен на каждый запрос; его MSRV 1.88 - как раз нижняя граница дерева"
