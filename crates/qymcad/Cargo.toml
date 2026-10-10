@@ -12,9 +12,9 @@ description = "QymCAD desktop app (egui + wgpu)"
 name = "qymcad"
 path = "src/lib.rs"
 
-[[bin]]
-name = "qymcad"
-path = "src/main.rs"
+# THE EXECUTABLE LIVES IN ITS OWN CRATE NOW (`crates/qymcad-app`): it is the one place the program and the
+# agent's server meet - the server stands on the program, so the program cannot stand on it back. The
+# binary keeps the name `qymcad`.
 
 [dependencies]
 qymcad-core.workspace = true

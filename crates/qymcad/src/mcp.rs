@@ -16,7 +16,7 @@ use crate::gui::App;
 /// WHAT THE AGENT DOES WITH THE PROGRAM: a slice of work over the driving core. The slice returns when its
 /// time is spent, saying whether the whole of the work has run - until it has, the next live frame takes up
 /// the call again, and the person's window keeps its frames coming meanwhile.
-pub(crate) type Work = dyn FnMut(&mut AgentSession) -> bool + Send;
+pub type Work = dyn FnMut(&mut AgentSession) -> bool + Send;
 
 /// ONE SLICE OF THE AGENT'S WORK to a live frame: a few milliseconds of the agent's frames, so the person's
 /// window is never held still for the agent's sake.
@@ -24,7 +24,7 @@ pub(crate) const SLICE: Duration = Duration::from_millis(5);
 
 /// HOW A CALL OF THE AGENT ENDED, as the one who asked reads it.
 #[derive(Debug)]
-pub(crate) enum Ended {
+pub enum Ended {
     /// The work ran whole.
     Done,
     /// THE PROGRAM IS ASKING THE PERSON: a gesture of the agent raised a chooser, and the person's answer is
@@ -76,11 +76,39 @@ pub(crate) fn the_agent_at_work_card(logo: &Option<egui::TextureHandle>, scheme:
 /// rather than when the person next moves the mouse.
 static WAKE: Mutex<Option<egui::Context>> = Mutex::new(None);
 
+/// HOW THE PROGRAM IS TO BE SERVED, as the last live frame left the settings: whether the agent's server
+/// is on, the port it listens on, the token a request must carry. The frames keep it current; the server
+/// thread reads it and follows.
+pub struct Serving {
+    pub on: bool,
+    pub port: u16,
+    pub token: String,
+}
+
+/// THE WISH OF THE SETTINGS, as the last live frame left it. The server thread reads this to know whether
+/// to serve, where, and for whom.
+static SERVING: Mutex<Serving> = Mutex::new(Serving { on: false, port: 51888, token: String::new() });
+
+/// THE WISH OF THE SETTINGS, for whoever serves the program. Taken as the settings stand; a lock left
+/// poisoned by a panic serves nothing rather than serving wrongly.
+pub fn the_wish() -> Serving {
+    SERVING.lock().map(|wish| Serving { on: wish.on, port: wish.port, token: wish.token.clone() }).unwrap_or(Serving { on: false, port: 51888, token: String::new() })
+}
+
+/// KEEP THE WISH CURRENT, once a frame: what the settings say is what the server follows, without a
+/// restart.
+fn keep_the_wish_current(set: &qymcad_ui_state::McpSettings) {
+    if let Ok(mut wish) = SERVING.lock() {
+        if (wish.on, wish.port, wish.token.as_str()) != (set.on, set.port, set.token.as_str()) {
+            *wish = Serving { on: set.on, port: set.port, token: set.token.clone() };
+        }
+    }
+}
+
 /// HAND A CALL OF THE AGENT to the frames of the program: it runs on the frame thread, a slice to a live
-/// frame, and its answer comes back from there. The live window is woken for it. The server thread's door;
-/// until the server lands, the checks drive it.
-#[cfg(test)]
-pub(crate) fn hand_over(work: Box<Work>, answer: Sender<Ended>) {
+/// frame, and its answer comes back from there. The live window is woken for it. The server's door into
+/// the program.
+pub fn hand_over(work: Box<Work>, answer: Sender<Ended>) {
     if let Ok(mut waiting) = WAITING.lock() {
         waiting.push_back(Call { work, answer });
     }
@@ -110,6 +138,7 @@ pub(crate) fn pump(app: &mut App, ctx: &egui::Context) {
     if let Ok(mut wake) = WAKE.lock() {
         *wake = Some(ctx.clone());
     }
+    keep_the_wish_current(crate::gui::mcp_settings_of(app));
     if the_person_holds_it(app, ctx) {
         return;
     }

@@ -6,9 +6,10 @@
 use std::process::ExitCode;
 
 pub use gui::session::{
-    pos2, vec2, AgentSession, Badge, Chooser, Command, Datum, Document, FaceKinds, Feature, Gizmo, Inspection, JointInfo, Key, Kept, Kind, Launch, Machine, Modifiers, Parameter, Part, Picture,
-    PointerButton, Pos2, Rect, Session, SketchInfo, SketchPick, SnapGlyph, Solid, Vec2, Widget, COMMANDS,
+    pos2, vec2, AgentSession, Badge, Chooser, Command, Datum, Document, Ended, FaceKinds, Feature, Gizmo, Inspection, JointInfo, Key, Kept, Kind, Launch, Machine, Modifiers, Parameter, Part,
+    Picture, PointerButton, Pos2, Rect, Serving, Session, SketchInfo, SketchPick, SnapGlyph, Solid, Vec2, Widget, Work, COMMANDS,
 };
+pub use gui::session::{hand_over, the_wish};
 
 /// START THE PROGRAM: open the window and run it until it closes; a start that fails is told to the person.
 pub fn run() -> ExitCode {

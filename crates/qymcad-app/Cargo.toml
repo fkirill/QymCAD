@@ -1,0 +1,25 @@
+[package]
+name = "qymcad-app"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "The executable: the program's library, with the agent's server stood up beside it"
+publish = false
+
+# WHY A CRATE OF ITS OWN FOR FIVE LINES. The server crate stands ON the program (it drives the program
+# through its public doors), so the program cannot stand on it back - a dependency cycle. The executable
+# is the one place both meet: it links the program, stands the server up, and runs the window. The binary
+# keeps the program's own name.
+[[bin]]
+name = "qymcad"
+path = "src/main.rs"
+
+[dependencies]
+qymcad = { path = "../qymcad" }
+qymcad-mcp = { path = "../qymcad-mcp" }
+
+[lints]
+workspace = true

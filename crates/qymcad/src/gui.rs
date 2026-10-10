@@ -4274,6 +4274,13 @@ mod io_jobs;
 mod file_ask;
 /// Where an export chooser opens lives in `gui/export_folder.rs`.
 mod export_folder;
+
+/// THE AGENT'S SERVER'S OWN SETTINGS, as the program holds them: what the pump keeps current for the
+/// server thread to follow.
+pub(crate) fn mcp_settings_of(app: &App) -> &qymcad_ui_state::McpSettings {
+    &app.set.mcp
+}
+
 /// Whole frames without a screen, for the hand of the checks and for a session, live in `gui/window.rs`.
 mod window;
 mod key_leak;

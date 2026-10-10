@@ -13,10 +13,15 @@ publish = false
 # the HTTP stack with it, and the main thread stays winit's - the runtime runs on the server thread only.
 # rmcp 3.5.1 (the official Rust SDK) declares rust-version 1.88, the workspace floor exactly, verified
 # before adoption; its streamable-HTTP server feature is the one transport that fits a server inside an
-# already-running program (stdio would require the client to spawn the program).
+# already-running program (stdio would require the client to spawn the program). rmcp serves a Tower
+# service; axum mounts it (and carries the token check as middleware), tokio runs it - all on the server
+# thread, never on the window's. The MSRVs (axum 1.80, tokio 1.71, tokio-util 1.85) sit under the floor.
 [dependencies]
 qymcad = { path = "../qymcad" }
 rmcp = { version = "3.5.1", features = ["transport-streamable-http-server"] }
+axum = "0.8"
+tokio = { version = "1", features = ["rt", "time", "net"] }
+tokio-util = "0.7"
 
 [lints]
 workspace = true

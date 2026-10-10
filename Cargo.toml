@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/qymcad-app",
     "crates/qymcad-mcp",
     "crates/qymcad-core",
     "crates/qymcad-kernel",
