@@ -238,7 +238,7 @@ impl<'a> AgentSession<'a> {
 
 /// THE DOCUMENT AS THE PROGRAM HOLDS IT, read and never written: what a person could find out by looking at the
 /// tree, the properties and the measuring tool.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct Document {
     /// The file the document is kept in, once it has one.
     pub path: Option<String>,
@@ -274,7 +274,7 @@ pub struct Document {
 }
 
 /// A DATUM a person has put in: a plane, an axis or a point, where it stands and which way it looks.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct Datum {
     /// Its name in the tree.
     pub name: String,
@@ -296,7 +296,7 @@ pub struct Gizmo {
 }
 
 /// A part or an assembly of the tree.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct Part {
     pub name: String,
     /// WHICH ONE IT IS, when two carry the same name - a clone or a part brought in from a file named as one already
@@ -318,7 +318,7 @@ pub struct Part {
 }
 
 /// A sketch, counted.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct SketchInfo {
     pub name: String,
     /// The part it belongs to.
@@ -357,7 +357,7 @@ pub struct SketchInfo {
 }
 
 /// A node of the timeline.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct Feature {
     pub name: String,
     /// What kind of node it is, by the program's own name for the kind (`Sketch`, `Extrude`, `Fillet`): the same
@@ -378,7 +378,7 @@ pub struct Feature {
 }
 
 /// A body, measured.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct Solid {
     pub name: String,
     /// The part it belongs to.
@@ -440,7 +440,7 @@ pub struct FaceKinds {
 }
 
 /// A parameter.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct Parameter {
     pub name: String,
     pub expr: String,
@@ -448,7 +448,7 @@ pub struct Parameter {
 }
 
 /// A joint between two parts.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct JointInfo {
     pub name: String,
     /// The kind of joint, as the program names it in code.
@@ -2571,6 +2571,64 @@ impl Session {
 impl Drop for Session {
     fn drop(&mut self) {
         crate::system::stand_in(false);
+    }
+}
+
+/// THE PERSON'S LIVE LOOP, AS A CHECK STANDS IN FOR IT: a program of the check's own, a window of the
+/// person's shape, and frames that take the agent's calls before they draw - what the live window does,
+/// without a screen. The agent's server is checked through one: its calls wait in the queue, and these
+/// frames answer them over this program as the person's frames answer them over theirs. The system is not
+/// stood in for here - the live program asks the real one - so a check that means to answer a chooser
+/// stands the system in itself.
+pub struct LiveLoop {
+    /// THE PROGRAM THE FRAMES RUN: the check's own, standing in for the person's live one.
+    app: Box<App>,
+    /// THE PERSON'S WINDOW, idle - no pointer, no keys, no closing; only what the frames themselves do.
+    win: Window,
+}
+
+impl LiveLoop {
+    /// START THE LIVE LOOP, ready for a person the way the window makes the program ready: the greeting
+    /// gone, the start-up loads settled. No frame is pumped yet - the agent's calls are taken by the
+    /// frames the check itself runs.
+    ///
+    /// # Panics
+    /// When another home of the program was kept in this process before: the program's own folders are
+    /// one per process.
+    pub fn start() -> LiveLoop {
+        let machine = Machine::default();
+        assert!(qymcad_paths::keep_under(machine.home.clone()), "one process keeps one home for the program; {} was asked for after another", machine.home.display());
+        super::prepare_the_process();
+        qymcad_i18n::stand_for_system_locale(&machine.locale);
+        let win = Window::new(egui::vec2(machine.screen.0, machine.screen.1));
+        let app = Box::new(super::start_the_program(&win.ctx, Some(&machine.kept)));
+        let mut core = AgentSession {
+            app: AppRef::Owned(app),
+            win,
+            budget: Duration::from_secs(120),
+            pointer: None,
+            held: Modifiers::default(),
+            last_press: f64::NEG_INFINITY,
+            down: Vec::new(),
+            locale: machine.locale,
+            watching: false,
+        };
+        if !machine.greeting {
+            // the greeting has been on screen for its time: it goes on the first frame, through its own branch
+            core.app.waiting.splash_until = Some(Instant::now());
+        }
+        core.settle();
+        let AgentSession { app: AppRef::Owned(app), win, .. } = core else { unreachable!("the loop's core owns its program and lends it to no frame") };
+        LiveLoop { app, win }
+    }
+
+    /// ONE FRAME OF THE PERSON'S WINDOW, as the live frame is: the agent's call is taken into the frame
+    /// before anything is drawn, then the frame draws. The check runs these in a loop while it waits for
+    /// the agent's answer; a call left half-run is taken up again by the next frame, asked for at once.
+    pub fn frame(&mut self) -> &mut Self {
+        crate::mcp::pump(&mut self.app, &self.win.ctx);
+        self.win.run(&mut self.app, egui::Modifiers::default(), Vec::new(), false);
+        self
     }
 }
 

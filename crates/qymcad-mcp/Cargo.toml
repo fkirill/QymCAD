@@ -18,10 +18,18 @@ publish = false
 # thread, never on the window's. The MSRVs (axum 1.80, tokio 1.71, tokio-util 1.85) sit under the floor.
 [dependencies]
 qymcad = { path = "../qymcad" }
+# THE PROGRAM'S OWN HELP, the toolset reads it: the same articles F1 opens, named by the command catalogue.
+qymcad-help = { path = "../qymcad-help" }
 rmcp = { version = "3.5.1", features = ["transport-streamable-http-server"] }
 axum = "0.8"
 tokio = { version = "1", features = ["rt", "time", "net"] }
 tokio-util = "0.7"
+# The shapes of the tools' parameters and the JSON of their answers. serde, serde_json, schemars and base64
+# are already in the tree through rmcp - the direct edges name what the toolset itself says, no new code.
+serde = { workspace = true }
+serde_json = "1.0.151"
+schemars = "1.2"
+base64 = "0.23"
 
 [lints]
 workspace = true

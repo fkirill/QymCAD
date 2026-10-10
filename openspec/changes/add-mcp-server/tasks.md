@@ -23,7 +23,7 @@
 - [x] 4.2 The rmcp streamable-HTTP server on a server thread (tokio never on the main thread), bound to `127.0.0.1`, port from the settings; check: a loopback client connects when the setting is on and is refused when it is off, without a restart
 - [x] 4.3 The pairing token: generated per the settings, required on every request, shown beside the switch for copying; check: a request without or with a wrong token is refused and nothing in the program changes
 - [x] 4.4 The settings section and its i18n keys (all strings through the catalogue), the default off; check: `i18n/tests` and the ratchets green, and the section follows the settings-panel patterns
-- [ ] 4.5 The native discovery set: `search-tool`, `call-tool`, `read-tool-help`, `get-tool-schema`, `get-document`, `screenshot`, `get-status`, `undo`, `redo`; check: a client lists exactly these, and each answers over a real agent session
+- [x] 4.5 The native discovery set: `search-tool`, `call-tool`, `read-tool-help`, `get-tool-schema`, `get-document`, `screenshot`, `get-status`, `undo`, `redo`; check: a client lists exactly these, and each answers over a real agent session
 
 ## 5. The registry
 
