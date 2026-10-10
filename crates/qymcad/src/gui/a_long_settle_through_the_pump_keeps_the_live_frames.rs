@@ -12,6 +12,7 @@ mod tests {
     /// them long.
     #[test]
     fn the_live_frames_never_stall_under_a_long_settle() {
+        let _turn = crate::mcp::take_your_turn();
         let mut app = App::default();
         let ctx = egui::Context::default();
         app.waiting.splash_until = Some(std::time::Instant::now() + Duration::from_millis(500));

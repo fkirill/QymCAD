@@ -40,6 +40,19 @@ static WAITING: Mutex<VecDeque<Call>> = Mutex::new(VecDeque::new());
 /// work says it is done.
 static RUNNING: Mutex<Option<Running>> = Mutex::new(None);
 
+/// IS A CALL OF THE AGENT RUNNING - taken up, not yet answered: what the window says with the card of a
+/// background job, so the person knows whose work the program is doing.
+static AT_WORK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// THE AGENT AT WORK, said with the card a background job uses, over the frame just drawn: the person's
+/// window keeps its frames coming under it, and the card goes the moment the call is answered.
+pub(crate) fn the_agent_at_work_card(logo: &Option<egui::TextureHandle>, scheme: &qymcad_ui_state::SchemeUi, ctx: &egui::Context) {
+    if !AT_WORK.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    qymcad_render::draw_splash(logo, scheme, ctx, &crate::i18n::tr("mcp-at-work"));
+}
+
 /// THE LIVE CONTEXT, as the last frame left it: what a call wakes, so the frame that takes it comes at once
 /// rather than when the person next moves the mouse.
 static WAKE: Mutex<Option<egui::Context>> = Mutex::new(None);
@@ -88,9 +101,11 @@ pub(crate) fn pump(app: &mut App, ctx: &egui::Context) {
             (call.work, call.answer, AgentSession::over(app, window_size(ctx)))
         }
     };
+    AT_WORK.store(true, std::sync::atomic::Ordering::Relaxed);
     let done = work(&mut core);
     let hands = core.hands();
     if done {
+        AT_WORK.store(false, std::sync::atomic::Ordering::Relaxed);
         let _ = answer.send(());
     } else {
         if let Ok(mut held) = RUNNING.lock() {
@@ -98,6 +113,14 @@ pub(crate) fn pump(app: &mut App, ctx: &egui::Context) {
         }
         ctx.request_repaint();
     }
+}
+
+/// THE CHECKS TAKE TURNS at the agent's machinery: the queue and the frame are one for the whole process,
+/// and checks beside each other would take each other's calls.
+#[cfg(test)]
+pub(crate) fn take_your_turn() -> std::sync::MutexGuard<'static, ()> {
+    static TURNS: Mutex<()> = Mutex::new(());
+    TURNS.lock().expect("the turns of the checks are not held by a poisoned lock")
 }
 
 #[cfg(test)]
@@ -108,6 +131,7 @@ mod tests {
     /// act of a live frame - and its answer comes back with nothing left waiting.
     #[test]
     fn the_pump_takes_a_call_in_one_frame() {
+        let _turn = take_your_turn();
         let mut app = App::default();
         let (answer, told) = std::sync::mpsc::channel();
         WAITING.lock().expect("the queue of the agent's calls is not poisoned").push_back(Call { work: Box::new(|_| true), answer });
@@ -129,6 +153,7 @@ mod tests {
     /// frame after the release runs the waiting call whole.
     #[test]
     fn a_call_waits_out_a_drag_of_the_person() {
+        let _turn = take_your_turn();
         let mut app = App::default();
         let ctx = egui::Context::default();
         the_person_s_button(true, &ctx);
@@ -141,5 +166,47 @@ mod tests {
         pump(&mut app, &ctx);
         assert!(told.try_recv().is_ok(), "the call did not resume once the person let go");
         assert!(WAITING.lock().expect("the queue of the agent's calls is not poisoned").is_empty(), "the call was left waiting after the release");
+    }
+
+    /// THE WORDS OF THE CARD on a context of the live window's shape: a first pass lays the card out, the
+    /// next draws it - an anchored window finds its place in one pass and paints in the following one.
+    fn the_words_of_the_card(ctx: &egui::Context) -> Vec<String> {
+        fn texts(s: &egui::Shape, out: &mut Vec<String>) {
+            match s {
+                egui::Shape::Text(t) => out.push(t.galley.text().to_string()),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| texts(s, out)),
+                _ => {}
+            }
+        }
+        let raw = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0))), ..Default::default() };
+        let card = |ui: &mut egui::Ui| the_agent_at_work_card(&None, &qymcad_ui_state::SchemeUi::default(), ui.ctx());
+        let _ = ctx.run_ui(raw.clone(), card);
+        let out = ctx.run_ui(raw, card);
+        let mut words = Vec::new();
+        for cs in &out.shapes {
+            texts(&cs.shape, &mut words);
+        }
+        words
+    }
+
+    /// THE CARD SAYS THE AGENT IS AT WORK while a call runs, and says nothing once the call is answered: the
+    /// words come with the first slice and go with the answer.
+    #[test]
+    fn the_card_says_the_agent_is_at_work_while_a_call_runs() {
+        let _turn = take_your_turn();
+        let mut app = App::default();
+        let ctx = egui::Context::default();
+        let runs = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counting = runs.clone();
+        let (answer, told) = std::sync::mpsc::channel();
+        hand_over(Box::new(move |_| counting.fetch_add(1, std::sync::atomic::Ordering::Relaxed) > 0), answer);
+        pump(&mut app, &ctx);
+        assert!(told.try_recv().is_err(), "the call of two slices answered after one");
+        let words = the_words_of_the_card(&ctx);
+        assert!(words.contains(&crate::i18n::tr("mcp-at-work")), "while a call runs the window does not say so: {words:?}");
+        pump(&mut app, &ctx);
+        assert!(told.try_recv().is_ok(), "the second slice did not answer the call");
+        let words = the_words_of_the_card(&ctx);
+        assert!(!words.contains(&crate::i18n::tr("mcp-at-work")), "after the call answered the window still says the agent is at work: {words:?}");
     }
 }

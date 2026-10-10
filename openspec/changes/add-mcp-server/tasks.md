@@ -9,7 +9,7 @@
 - [x] 2.1 Create `crates/qymcad/src/mcp.rs`: the process-static request queue (the `WATCH` precedent), `pub(crate) fn pump(&mut App, &egui::Context)`, and the single call line in `impl eframe::App for App::ui` before `draw_frame`; check: `god_object_ratchet` and `comment_ratchet` green, and a test pushes a no-op request and sees the pump take it in one frame
 - [x] 2.2 Deference in the pump: a pointer button held in the live context, a text field holding the keyboard, or a chooser open holds the queue; check: a test with the hand mid-drag sees a queued request wait and resume after the release
 - [x] 2.3 Time slices: the pump runs agent frames under a millisecond budget per live frame and re-requests repaint until the call answers; check: a test runs a long settle through the pump while live frames keep being counted, and the live frame count never stalls
-- [ ] 2.4 The "agent at work" indicator: the overlay the rebuild card uses, in the agent's words, raised while a call runs; check: a scenario test reads the indicator's words come and go with a call
+- [x] 2.4 The "agent at work" indicator: the overlay the rebuild card uses, in the agent's words, raised while a call runs; check: a scenario test reads the indicator's words come and go with a call
 
 ## 3. The agent window
 

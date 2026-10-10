@@ -2761,3 +2761,4 @@ import-scale-kept = The scale is left as it was.
 import-scale-wait = The bodies are still loading from the file. Try again when loading is done.
 settings-import-ask = Ask for units and scale on every import
 settings-import-ask-hint = Unticked, the window comes up for files without units (STL, OBJ, PLY) and when a model is under 1 mm or over 10 m.
+mcp-at-work = The agent is working…

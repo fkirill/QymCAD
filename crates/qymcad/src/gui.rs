@@ -1940,6 +1940,8 @@ impl eframe::App for App {
         // the program, never between them.
         crate::mcp::pump(self, ui.ctx());
         self.draw_frame(ui);
+        // THE AGENT AT WORK says so over the frame, with the card a background job uses, while a call runs.
+        crate::mcp::the_agent_at_work_card(&self.logo_tex, &self.scheme, ui.ctx());
     }
 }
 
