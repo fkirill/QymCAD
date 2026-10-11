@@ -1259,6 +1259,7 @@ mod tests {
             ("part.push-face", vec![[20.0, 15.0, 10.0]], vec![("offset", "2")]),
             ("part.split-body", vec![[20.0, 15.0, 10.0]], vec![("offset", "-3")]),
             ("part.split-face", vec![[20.0, 15.0, 10.0]], vec![("offset", "-3")]),
+            ("part.thicken", vec![[20.0, 15.0, 10.0]], vec![("thickness", "2")]),
         ] {
             let mut block = qymcad::LiveLoop::start();
             let answered = crate::checks::ask_the_core(&mut block, move |core| {
