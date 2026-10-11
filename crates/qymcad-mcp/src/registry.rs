@@ -229,6 +229,8 @@ const RICHER_RUNS: &[Wired] = &[
     Wired { code: "part.cone", run: make_a_primitive, takes: &[] },
     Wired { code: "part.torus", run: make_a_primitive, takes: &[] },
     Wired { code: "part.prism", run: make_a_primitive, takes: &[] },
+    Wired { code: "part.extrude", run: work_a_contour, takes: &[] },
+    Wired { code: "part.revolve", run: work_a_contour, takes: &[] },
 ];
 
 /// DRAW A CHAIN OF LINES: the tool taken, every place of the sheet clicked in turn, the chain ended as a
@@ -578,6 +580,29 @@ fn lay_an_offset(core: &mut qymcad::AgentSession, code: &str, given: &serde_json
     match the_open_sketch(core) {
         Some(after) if after.name == sketch.name && things(&after) > things(&sketch) => Answered::Ran(format!("{} place(s) offset by {distance} of {}", chain.len(), sketch.name)),
         _ => Answered::Refused(format!("no copy was laid: {}", core.status())),
+    }
+}
+
+/// WORK A CONTOUR into a body - extruded for the extrude of the code, revolved for its revolve: the
+/// command taken over the sketch that stands finished, the sizes the call carried filled into the bar,
+/// Enter to set the size, Enter to apply. The body of the feature is in the part after it, its node
+/// built without error; what the contour cannot make (nothing drawn, a revolve about no axis) is the
+/// program's own refusal.
+fn work_a_contour(core: &mut qymcad::AgentSession, code: &str, given: &serde_json::Value) -> Answered {
+    let Some(entry) = by_code(code) else { return Answered::Refused(format!("{code}: no operation of the program is named so")) };
+    let kind = if code == "part.revolve" { "Revolve" } else { "Extrude" };
+    let before = core.document();
+    let (bodies_before, nodes_before) = (before.bodies.len(), before.features.iter().filter(|f| f.kind == kind).count());
+    take_the_command(core, entry.command);
+    fill_the_fields(core, given);
+    core.key(qymcad::Key::Enter);
+    core.key(qymcad::Key::Enter);
+    let document = core.document();
+    let node = document.features.iter().filter(|f| f.kind == kind).rfind(|f| f.error.is_none());
+    match (document.bodies.len() > bodies_before || document.features.iter().filter(|f| f.kind == kind).count() > nodes_before, node) {
+        (true, Some(node)) if document.bodies.iter().any(|b| b.volume > 0.0) => Answered::Ran(format!("a {} made ({}), its body in the part", kind, node.name)),
+        (true, Some(node)) => Answered::Refused(format!("the {} would not build: {}", kind, node.error.clone().unwrap_or_default())),
+        _ => Answered::Refused(format!("nothing was made: {}", core.status())),
     }
 }
 
@@ -1850,6 +1875,63 @@ mod tests {
         assert!(!words.trim().is_empty(), "the refused sphere said nothing");
         let after = crate::checks::ask_the_core(&mut program, |core| core.document()).expect("the document was read");
         assert_eq!(after, stood, "a refused primitive changed the document");
+    }
+
+    /// THE CONTOUR FEATURES, run as calls over a finished rectangle: the extrude lifts it to the height
+    /// the call carries (a block of exactly its area times its height), the revolve turns it about the
+    /// axis its bar comes with (a cylinder of exactly its swept volume). Each is weighed by the volume
+    /// of the body that lands; over a part with no contour to work, each is refused in the program's
+    /// own words and the part holds what it held.
+    #[test]
+    fn the_contour_features_make_their_bodies() {
+        let _turn = crate::checks::take_your_turn();
+        /// A FINISHED 40 X 30 RECTANGLE ON XY of a first part: the sketch closed, the part standing in 3D.
+        fn a_finished_rectangle() -> qymcad::LiveLoop {
+            let mut program = qymcad::LiveLoop::start();
+            crate::checks::ask_the_core(&mut program, |core| {
+                let new_part = core.word("start-new-part");
+                core.press_word(&new_part);
+                let xy = core.word("plane-xy-table");
+                core.press_word(&xy);
+                let rect = core.word("tb-rect-hint");
+                core.press_hint(&rect);
+                core.click_on_sketch(0.0, 0.0).click_on_sketch(40.0, 30.0);
+                let finish = core.word("wb-finish");
+                core.press_word_near(&finish, qymcad::pos2(0.0, 0.0));
+            })
+            .expect("the fixture was built");
+            program
+        }
+        // THE EXTRUDE: the rectangle lifted 10 - a block of 40 x 30 x 10
+        let mut program = a_finished_rectangle();
+        let answered = crate::checks::ask_the_core(&mut program, |core| call(core, "part.extrude", &serde_json::json!({ "Length": "10" }))).expect("the call answered");
+        assert!(matches!(answered, TheCall::Answered { .. }), "the extrude did not run: {answered:?}");
+        let volume = crate::checks::ask_the_core(&mut program, |core| core.document().bodies.iter().map(|b| b.volume).fold(0.0, f64::max)).expect("the body was read");
+        assert!((volume - 12000.0).abs() < 12000.0 * 1e-3, "the extruded rectangle of 40 x 30 lifted 10 holds {volume}, not 12000");
+        // THE REVOLVE: the rectangle turned about the axis its bar comes with - a cylinder of the swept
+        // volume
+        let mut program = a_finished_rectangle();
+        let answered = crate::checks::ask_the_core(&mut program, |core| call(core, "part.revolve", &serde_json::json!({}))).expect("the call answered");
+        assert!(matches!(answered, TheCall::Answered { .. }), "the revolve did not run: {answered:?}");
+        let volume = crate::checks::ask_the_core(&mut program, |core| core.document().bodies.iter().map(|b| b.volume).fold(0.0, f64::max)).expect("the body was read");
+        let want = std::f64::consts::PI * 30.0 * 30.0 * 40.0;
+        assert!((volume - want).abs() < want * 1e-3, "the revolved rectangle holds {volume}, not the {want} of a cylinder of radius 30 and length 40");
+        // OVER A PART WITH NO CONTOUR each is refused in the program's words, the part as it stood
+        let mut bare = qymcad::LiveLoop::start();
+        crate::checks::ask_the_core(&mut bare, |core| {
+            core.key(qymcad::Key::Escape);
+            let new_part = core.word("tb-new-part-hint");
+            core.press_hint(&new_part);
+        })
+        .expect("the fixture was built");
+        let stood = crate::checks::ask_the_core(&mut bare, |core| core.document()).expect("the document was read");
+        for code in ["part.extrude", "part.revolve"] {
+            let refused = crate::checks::ask_the_core(&mut bare, |core| call(core, code, &serde_json::json!({}))).expect("the call answered");
+            let TheCall::Refused(words) = &refused else { panic!("{code} over no contour was not refused: {refused:?}") };
+            assert!(!words.trim().is_empty(), "{code} over no contour said nothing");
+        }
+        let after = crate::checks::ask_the_core(&mut bare, |core| core.document()).expect("the document was read");
+        assert_eq!(after, stood, "a refused contour feature changed the document");
     }
 
     /// THE PROBLEMS THAT STAND AFTER A CALL are carried in its answer, in the words the acceptance
