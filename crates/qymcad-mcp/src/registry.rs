@@ -101,6 +101,9 @@ fn checked_against(given: &serde_json::Value, fields: &[Parameter], takes: &[Tak
         if take.kind == "points" && !the_pairs(value).is_some_and(|p| p.len() >= 2) {
             return Err(format!("{name} takes places on the sheet as [x, y] pairs, two at least, and the call carried {value}"));
         }
+        if take.kind == "picks" && !the_triples(Some(value)).is_some_and(|p| !p.is_empty()) {
+            return Err(format!("{name} takes places in the space of the model as [x, y, z] triples, and the call carried {value}"));
+        }
     }
     for take in takes {
         if !given.contains_key(take.name) {
@@ -159,7 +162,8 @@ pub(crate) struct Take {
     /// The parameter's name, as the call carries it.
     pub(crate) name: &'static str,
     /// What kind of value it takes: `points` - places on the sheet of the open sketch, each an [x, y]
-    /// pair.
+    /// pair; `picks` - places in the space of the model, each an [x, y, z] triple naming what stands
+    /// there (an edge, a face, a body).
     pub(crate) kind: &'static str,
 }
 
@@ -231,6 +235,14 @@ const RICHER_RUNS: &[Wired] = &[
     Wired { code: "part.prism", run: make_a_primitive, takes: &[] },
     Wired { code: "part.extrude", run: work_a_contour, takes: &[] },
     Wired { code: "part.revolve", run: work_a_contour, takes: &[] },
+    Wired { code: "part.fillet", run: work_on_the_body, takes: &[Take { name: "picks", kind: "picks" }] },
+    Wired { code: "part.chamfer", run: work_on_the_body, takes: &[Take { name: "picks", kind: "picks" }] },
+    Wired { code: "part.shell", run: work_on_the_body, takes: &[Take { name: "picks", kind: "picks" }] },
+    Wired { code: "part.hole", run: work_on_the_body, takes: &[Take { name: "picks", kind: "picks" }] },
+    Wired { code: "part.push-face", run: work_on_the_body, takes: &[Take { name: "picks", kind: "picks" }] },
+    Wired { code: "part.split-body", run: work_on_the_body, takes: &[Take { name: "picks", kind: "picks" }] },
+    Wired { code: "part.split-face", run: work_on_the_body, takes: &[Take { name: "picks", kind: "picks" }] },
+    Wired { code: "part.thicken", run: work_on_the_body, takes: &[Take { name: "picks", kind: "picks" }] },
 ];
 
 /// DRAW A CHAIN OF LINES: the tool taken, every place of the sheet clicked in turn, the chain ended as a
@@ -638,6 +650,55 @@ fn make_a_primitive(core: &mut qymcad::AgentSession, code: &str, given: &serde_j
     }
 }
 
+/// WORK ON THE BODY THAT STANDS - an edge rounded or cut, a face bored, hollowed, pushed, tilted,
+/// removed, split, a sheet thickened: the command taken, every place in the space of the model clicked
+/// (each names what it stands on - an edge of the body, a face of it), the values the call carried
+/// filled into the fields the take put up, Enter. The feature's node is in the timeline after it,
+/// built without error, and a body still stands; what the picks and values cannot make (nothing to
+/// work on, an edge that is not there) is the program's own refusal.
+fn work_on_the_body(core: &mut qymcad::AgentSession, code: &str, given: &serde_json::Value) -> Answered {
+    let Some(entry) = by_code(code) else { return Answered::Refused(format!("{code}: no operation of the program is named so")) };
+    let kind = match code {
+        "part.chamfer" => "Chamfer",
+        "part.shell" => "Shell",
+        "part.hole" => "Hole",
+        "part.draft" => "Draft",
+        "part.thread" => "Thread",
+        "part.push-face" => "PushFace",
+        "part.remove-face" => "RemoveFace",
+        "part.split-body" => "SplitBody",
+        "part.split-face" => "SplitFace",
+        "part.thicken" => "Thicken",
+        _ => "Fillet",
+    };
+    let Some(picks) = the_triples(given.get("picks")) else {
+        return Answered::Refused(format!("the {} needs its places in the space of the model: a place on each edge or face it works on", entry.command.name()));
+    };
+    let before = core.document();
+    let nodes_before = before.features.iter().filter(|f| f.kind == kind).count();
+    take_the_command(core, entry.command);
+    core.settle(); // the take lands the tool a frame later; the picks click what the tool waits for
+    for p in &picks {
+        let at = core.in_space(*p);
+        core.click(at);
+    }
+    fill_the_fields(core, given);
+    core.key(qymcad::Key::Enter);
+    let document = core.document();
+    let node = document.features.iter().filter(|f| f.kind == kind && !f.suppressed).rfind(|f| f.error.is_none());
+    match (document.features.iter().filter(|f| f.kind == kind).count() > nodes_before, node, document.bodies.iter().any(|b| b.volume > 0.0)) {
+        (true, Some(node), true) => Answered::Ran(format!("a {} made ({}), the body still in the part", kind, node.name)),
+        (true, Some(node), _) => Answered::Refused(format!("the {} would not build: {}", kind, node.error.clone().unwrap_or_default())),
+        _ => Answered::Refused(format!("nothing was made: {}", core.status())),
+    }
+}
+
+/// THE TRIPLES A VALUE HOLDS: places in the space of the model, each an [x, y, z] triple of numbers;
+/// `None` at the first thing that is not one.
+fn the_triples(value: Option<&serde_json::Value>) -> Option<Vec<[f64; 3]>> {
+    value?.as_array()?.iter().map(|p| Some([p.as_array()?.first()?.as_f64()?, p.as_array()?.get(1)?.as_f64()?, p.as_array()?.get(2)?.as_f64()?])).collect()
+}
+
 /// THE ARROW OF THE PANEL, put up as a person puts it before picking - whatever was in hand down, the
 /// select tool up.
 fn take_the_arrow(core: &mut qymcad::AgentSession) {
@@ -869,7 +930,11 @@ pub(crate) fn parameters(core: &mut qymcad::AgentSession, code: &str) -> Vec<Par
     all.extend(entry.takes.iter().map(|t| Parameter {
         name: t.name.to_string(),
         kind: t.kind.to_string(),
-        says: if t.kind == "points" { "places on the sheet of the open sketch, each an [x, y] pair".to_string() } else { String::new() },
+        says: match t.kind {
+            "points" => "places on the sheet of the open sketch, each an [x, y] pair".to_string(),
+            "picks" => "places in the space of the model, each an [x, y, z] triple naming what stands there".to_string(),
+            _ => String::new(),
+        },
     }));
     all
 }
@@ -962,7 +1027,9 @@ mod tests {
             })
             .expect("the screen was read");
             let answered = crate::checks::ask_the_core(&mut program, move |core| parameters(core, code)).expect("the parameters were read");
-            let as_pairs: Vec<(String, String)> = answered.iter().map(|p| (p.name.clone(), p.says.clone())).collect();
+            // the run's own takes (its picks, its places) stand beside the bar's fields, not on it
+            let take_names: Vec<String> = by_code(code).expect("the code names an entry").takes.iter().map(|t| t.name.to_string()).collect();
+            let as_pairs: Vec<(String, String)> = answered.iter().filter(|p| !take_names.contains(&p.name)).map(|p| (p.name.clone(), p.says.clone())).collect();
             assert_eq!(as_pairs, own, "{code}: the registry's parameters are not the fields its bar puts up");
             if !answered.is_empty() {
                 bars_opened += 1;
@@ -1137,9 +1204,10 @@ mod tests {
             }
         }
         // (the projection is held for its own phase below: its work needs a body under the sheet, and
-        // the open sketch of this one has none)
+        // the open sketch of this one has none; the part features are held for the block phase - their
+        // picks are places in the space of a body)
         let mut square = 0;
-        for entry in the_registry().iter().filter(|e| !e.takes.is_empty() && e.command.code != "sketch.project") {
+        for entry in the_registry().iter().filter(|e| !e.takes.is_empty() && e.command.workbench == "sketch" && e.command.code != "sketch.project") {
             let code = entry.command.code;
             // the squares run right four and then up a row, the span of the whole loop kept narrow
             square += 1;
@@ -1179,6 +1247,43 @@ mod tests {
         })
         .expect("the projection answered");
         assert!(matches!(answered, TheCall::Answered { .. }), "sketch.project projected nothing over the face of the block: {answered:?}");
+        // OVER A BLOCK each part feature that works by its picks runs: a fresh block for each (a feature
+        // changes the body it worked on), the picks naming an edge or a face of it, the values carried
+        // as the call carries them. The features whose flow presses a word of the bar between its picks
+        // (the draft's neutral face, the thread's cylinder) are held for their own richer runs.
+        for (code, picks, fields) in [
+            ("part.fillet", vec![[20.0, 0.0, 10.0]], vec![("radius", "3")]),
+            ("part.chamfer", vec![[20.0, 0.0, 10.0]], vec![("leg", "2")]),
+            ("part.shell", vec![[20.0, 15.0, 10.0]], vec![("thickness", "2")]),
+            ("part.hole", vec![[20.0, 15.0, 10.0]], vec![("diameter", "10"), ("depth", "5")]),
+            ("part.push-face", vec![[20.0, 15.0, 10.0]], vec![("offset", "2")]),
+            ("part.split-body", vec![[20.0, 15.0, 10.0]], vec![("offset", "-3")]),
+            ("part.split-face", vec![[20.0, 15.0, 10.0]], vec![("offset", "-3")]),
+        ] {
+            let mut block = qymcad::LiveLoop::start();
+            let answered = crate::checks::ask_the_core(&mut block, move |core| {
+                let new_part = core.word("start-new-part");
+                core.press_word(&new_part);
+                let xy = core.word("plane-xy-table");
+                core.press_word(&xy);
+                let rect = core.word("tb-rect-hint");
+                core.press_hint(&rect);
+                core.click_on_sketch(0.0, 0.0).click_on_sketch(40.0, 30.0);
+                let finish = core.word("wb-finish");
+                core.press_word_near(&finish, qymcad::pos2(0.0, 0.0));
+                call(core, "part.extrude", &serde_json::json!({ "Length": "10" }));
+                let mut given = serde_json::Map::new();
+                given.insert("picks".into(), serde_json::json!(picks));
+                for (needle, value) in &fields {
+                    if let Some(found) = parameters(core, code).into_iter().find(|p| p.name.to_lowercase().contains(needle)) {
+                        given.insert(found.name.clone(), serde_json::json!(value));
+                    }
+                }
+                call(core, code, &serde_json::Value::Object(given))
+            })
+            .expect("the call answered");
+            assert!(matches!(answered, TheCall::Answered { .. }), "{code} worked nothing over the block: {answered:?}");
+        }
     }
 
     /// THE FRAME OF A CALL, checked at each of its refusals and at its answer: a name no operation
@@ -1932,6 +2037,96 @@ mod tests {
         }
         let after = crate::checks::ask_the_core(&mut bare, |core| core.document()).expect("the document was read");
         assert_eq!(after, stood, "a refused contour feature changed the document");
+    }
+
+    /// THE BODY FEATURES, run as calls over a block of 40 x 30 x 10: an edge chamfered back by its leg
+    /// (the wedge of it gone from the volume), a hole bored to its diameter and depth, the inside
+    /// hollowed to a thickness open at the face that was clicked, an edge rounded. Each is weighed by
+    /// the volume the body holds after it, in the numbers the acceptance checks weigh the same tools
+    /// by; over a part with no body to work on, each is refused in the program's own words and the
+    /// part holds what it held.
+    #[test]
+    fn the_body_features_work_their_contracts() {
+        let _turn = crate::checks::take_your_turn();
+        /// A BLOCK OF 40 X 30 X 10 in the first part: the rectangle drawn and finished, extruded by
+        /// the registry's own call.
+        fn a_block() -> qymcad::LiveLoop {
+            let mut program = qymcad::LiveLoop::start();
+            crate::checks::ask_the_core(&mut program, |core| {
+                let new_part = core.word("start-new-part");
+                core.press_word(&new_part);
+                let xy = core.word("plane-xy-table");
+                core.press_word(&xy);
+                let rect = core.word("tb-rect-hint");
+                core.press_hint(&rect);
+                core.click_on_sketch(0.0, 0.0).click_on_sketch(40.0, 30.0);
+                let finish = core.word("wb-finish");
+                core.press_word_near(&finish, qymcad::pos2(0.0, 0.0));
+                call(core, "part.extrude", &serde_json::json!({ "Length": "10" }));
+            })
+            .expect("the fixture was built");
+            program
+        }
+        /// THE VOLUME OF THE BODY the tools last worked on: the last one the part holds.
+        fn the_volume(program: &mut qymcad::LiveLoop) -> f64 {
+            crate::checks::ask_the_core(program, |core| core.document().bodies.last().map(|b| b.volume).unwrap_or(0.0)).expect("the body was read")
+        }
+        /// ONE FEATURE CALL over a fresh block, its fields read from the live tool and set to `values`
+        /// by the words their captions carry (a radius, a leg, a diameter, a depth, a thickness).
+        fn work(program: &mut qymcad::LiveLoop, code: &str, picks: &[[f64; 3]], values: &[(&str, &str)]) -> TheCall {
+            let code = code.to_string();
+            let picks = picks.to_vec();
+            let values = values.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect::<Vec<_>>();
+            crate::checks::ask_the_core(program, move |core| {
+                let mut given = serde_json::Map::new();
+                given.insert("picks".into(), serde_json::json!(picks));
+                for (needle, value) in &values {
+                    let found = parameters(core, &code).into_iter().find(|p| p.name.to_lowercase().contains(needle)).unwrap_or_else(|| panic!("{code} puts up no field carrying {needle:?}"));
+                    given.insert(found.name.clone(), serde_json::json!(value));
+                }
+                call(core, &code, &serde_json::Value::Object(given))
+            })
+            .expect("the call answered")
+        }
+        // A CHAMFER of 2 along the front-top edge of 40: the wedge of 80 gone
+        let mut program = a_block();
+        let answered = work(&mut program, "part.chamfer", &[[20.0, 0.0, 10.0]], &[("leg", "2")]);
+        assert!(matches!(answered, TheCall::Answered { .. }), "the chamfer did not run: {answered:?}");
+        assert!((the_volume(&mut program) - (12000.0 - 80.0)).abs() < 1.0, "the chamfered block does not hold 11920");
+        // A HOLE of 10 across and 5 deep in the middle of the top face
+        let mut program = a_block();
+        let answered = work(&mut program, "part.hole", &[[20.0, 15.0, 10.0]], &[("diameter", "10"), ("depth", "5")]);
+        assert!(matches!(answered, TheCall::Answered { .. }), "the hole did not run: {answered:?}");
+        let want = 12000.0 - std::f64::consts::PI * 25.0 * 5.0;
+        assert!((the_volume(&mut program) - want).abs() < 2.0, "the bored block does not hold {want}");
+        // A SHELL of 2, open at the top face: the cavity of 36 by 26 by 8 gone
+        let mut program = a_block();
+        let answered = work(&mut program, "part.shell", &[[20.0, 15.0, 10.0]], &[("thickness", "2")]);
+        assert!(matches!(answered, TheCall::Answered { .. }), "the shell did not run: {answered:?}");
+        let want = 12000.0 - 36.0 * 26.0 * 8.0;
+        assert!((the_volume(&mut program) - want).abs() < 1.0, "the hollowed block does not hold {want}");
+        // A FILLET of 3 on the front-top edge: material gone, the edge gone
+        let mut program = a_block();
+        let answered = work(&mut program, "part.fillet", &[[20.0, 0.0, 10.0]], &[("radius", "3")]);
+        assert!(matches!(answered, TheCall::Answered { .. }), "the fillet did not run: {answered:?}");
+        let volume = the_volume(&mut program);
+        assert!((12000.0 - 200.0..12000.0).contains(&volume), "the rounded block holds {volume}, no wedge of a fillet of 3 came off");
+        // OVER A PART WITH NO BODY each is refused in the program's words, the part as it stood
+        let mut bare = qymcad::LiveLoop::start();
+        crate::checks::ask_the_core(&mut bare, |core| {
+            core.key(qymcad::Key::Escape);
+            let new_part = core.word("tb-new-part-hint");
+            core.press_hint(&new_part);
+        })
+        .expect("the fixture was built");
+        let stood = crate::checks::ask_the_core(&mut bare, |core| core.document()).expect("the document was read");
+        for code in ["part.fillet", "part.chamfer", "part.shell", "part.hole"] {
+            let refused = crate::checks::ask_the_core(&mut bare, |core| call(core, code, &serde_json::json!({ "picks": [[0.0, 0.0, 0.0]] }))).expect("the call answered");
+            let TheCall::Refused(words) = &refused else { panic!("{code} over no body was not refused: {refused:?}") };
+            assert!(!words.trim().is_empty(), "{code} over no body said nothing");
+        }
+        let after = crate::checks::ask_the_core(&mut bare, |core| core.document()).expect("the document was read");
+        assert_eq!(after, stood, "a refused body feature changed the document");
     }
 
     /// THE PROBLEMS THAT STAND AFTER A CALL are carried in its answer, in the words the acceptance
