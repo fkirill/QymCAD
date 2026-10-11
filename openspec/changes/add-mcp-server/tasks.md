@@ -27,14 +27,14 @@
 
 ## 5. The registry
 
-- [ ] 5.1 The registry entry as data (code, names in each language, description from the help article, parameters, category, synonyms, executor) and its derivation from the command catalogue; check: a test derives the registry and finds every catalogue command in it
-- [ ] 5.2 Parameter shapes from the live tool: taking a command and reading its bar's fields yields the parameter list; check: for every feature command, the bar's fields match the registry entry's parameters
-- [ ] 5.3 `search-tool` matching over codes, names in each language, help titles and synonyms, workbench filter, current-workbench-first ordering (the command search's rules); check: a tool is found in each of the program's languages, and a miss answers in words
-- [ ] 5.4 The ratchet guard: every catalogue command discoverable, every registry entry executable; check: the guard runs in the crate's tests and fails when an entry is unwired (tried red first)
+- [x] 5.1 The registry entry as data (code, names in each language, description from the help article, parameters, category, synonyms, executor) and its derivation from the command catalogue; check: a test derives the registry and finds every catalogue command in it
+- [x] 5.2 Parameter shapes from the live tool: taking a command and reading its bar's fields yields the parameter list; check: for every feature command, the bar's fields match the registry entry's parameters
+- [x] 5.3 `search-tool` matching over codes, names in each language, help titles and synonyms, workbench filter, current-workbench-first ordering (the command search's rules); check: a tool is found in each of the program's languages, and a miss answers in words
+- [x] 5.4 The ratchet guard: every catalogue command discoverable, every registry entry executable; check: the guard runs in the crate's tests and fails when an entry is unwired (tried red first)
 
 ## 6. The executors
 
-- [ ] 6.1 The executor frame: validate against the entry, run through `AgentSession`, settle, run the post-call checks, answer `{status, problems, outcome}`; unknown name, missing or wrong-typed parameter, and refused operation each answer in words and leave the document as it stood (checks for each refusal)
+- [x] 6.1 The executor frame: validate against the entry, run through `AgentSession`, settle, run the post-call checks, answer `{status, problems, outcome}`; unknown name, missing or wrong-typed parameter, and refused operation each answer in words and leave the document as it stood (checks for each refusal)
 - [ ] 6.2 The post-call checks: a chosen subset of the acceptance oracles over the same read-outs, problems carried in the result; check: a call that leaves "a tool waiting with no bar saying so" answers with that problem
 - [ ] 6.3 Sketch operations: every drawing tool, the twelve constraints, the three dimensions, trim/extend/break/project, move/copy/rotate/mirror/offset, corner and chamfer; each with its own contract check through `AgentSession`
 - [ ] 6.4 Part operations: every feature and primitive of the catalogue, datums, sketch-on-face; each with its own check
