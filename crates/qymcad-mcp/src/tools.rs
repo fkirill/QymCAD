@@ -97,8 +97,7 @@ struct CallToolParams {
     /// The code of the operation to run, as search-tool answers it.
     name: String,
     /// The operation's parameters, as get-tool-schema describes them. The schema of the call names the
-    /// field; the executor that reads what it carries arrives with the registry of operations.
-    #[allow(dead_code)] // carried by every call, read by no executor until one is served
+    /// field; the run that reads what they carry arrives with the registry of operations.
     parameters: Option<JsonObject>,
 }
 
@@ -180,15 +179,11 @@ impl TheAgent {
     )]
     fn search_tool(&self, Parameters(SearchToolParams { query, workbench }): Parameters<SearchToolParams>) -> Result<CallToolResult, rmcp::ErrorData> {
         let needle = query.to_lowercase();
-        let languages = qymcad_help::languages();
-        let found: Vec<serde_json::Value> = qymcad::COMMANDS
+        let found: Vec<serde_json::Value> = crate::registry::the_registry()
             .iter()
-            .filter(|c| workbench.as_deref().is_none_or(|w| w == c.workbench))
-            .filter(|c| c.code.to_lowercase().contains(&needle) || languages.iter().any(|l| c.name_in(l).to_lowercase().contains(&needle)))
-            .map(|c| {
-                let names: serde_json::Map<String, serde_json::Value> = languages.iter().map(|l| (l.clone(), serde_json::json!(c.name_in(l)))).collect();
-                serde_json::json!({ "code": c.code, "names": names, "workbench": c.workbench })
-            })
+            .filter(|e| workbench.as_deref().is_none_or(|w| w == e.command.workbench))
+            .filter(|e| e.command.code.to_lowercase().contains(&needle) || e.names().values().any(|n| n.to_lowercase().contains(&needle)))
+            .map(|e| serde_json::json!({ "code": e.command.code, "names": e.names(), "workbench": e.command.workbench }))
             .collect();
         if found.is_empty() {
             return Ok(CallToolResult::success(vec![ContentBlock::text(format!(
@@ -219,23 +214,32 @@ impl TheAgent {
 
     /// RUN AN OPERATION OF THE PROGRAM by its code and parameters, as a person runs it through the same
     /// interface. The registry of runnable operations is derived from the program's own sources; a name
-    /// outside it is refused in words and the document is left as it stood.
+    /// outside it is refused in words, and a name the registry holds no run for is said so. The document
+    /// is left as it stood by every refusal.
     #[tool(name = "call-tool", description = "Run an operation of the program by its code and parameters, as a person runs it through the same interface")]
-    fn call_tool(&self, Parameters(CallToolParams { name, parameters: _ }): Parameters<CallToolParams>) -> Result<CallToolResult, rmcp::ErrorData> {
-        let Some(command) = qymcad::COMMANDS.iter().find(|c| c.code == name) else {
+    async fn call_tool(&self, Parameters(CallToolParams { name, parameters }): Parameters<CallToolParams>) -> Result<CallToolResult, rmcp::ErrorData> {
+        let Some(entry) = crate::registry::by_code(&name) else {
             return Ok(no_such_operation(&name));
         };
-        Ok(not_served(command))
+        let Some(run) = entry.run else {
+            return Ok(not_served(entry.command));
+        };
+        let code = entry.command.code;
+        let parameters = serde_json::Value::Object(parameters.unwrap_or_default());
+        Ok(match the_program_answers(move |core| run(core, code, &parameters)).await {
+            Ok(said) => CallToolResult::success(vec![ContentBlock::text(said)]),
+            Err(said) => CallToolResult::error(vec![ContentBlock::text(said)]),
+        })
     }
 
     /// THE PARAMETERS AN OPERATION TAKES, by its code: each field's name, its kind, and what it says. The
     /// shapes are read from the tools themselves; a name outside the registry is refused in words.
     #[tool(name = "get-tool-schema", description = "The parameters an operation takes, by its code: each field's name, its kind, and what it says")]
-    fn get_tool_schema(&self, Parameters(GetToolSchemaParams { name }): Parameters<GetToolSchemaParams>) -> Result<CallToolResult, rmcp::ErrorData> {
-        let Some(command) = qymcad::COMMANDS.iter().find(|c| c.code == name) else {
+    async fn get_tool_schema(&self, Parameters(GetToolSchemaParams { name }): Parameters<GetToolSchemaParams>) -> Result<CallToolResult, rmcp::ErrorData> {
+        let Some(entry) = crate::registry::by_code(&name) else {
             return Ok(no_such_operation(&name));
         };
-        Ok(not_served(command))
+        Ok(not_served(entry.command))
     }
 }
 
