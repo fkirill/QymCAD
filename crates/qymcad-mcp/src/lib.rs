@@ -115,9 +115,45 @@ async fn the_pairing_token(request: axum::extract::Request, next: Next) -> Respo
 /// serves - the discovery set, and the calling by name - is its own module.
 struct TheAgent;
 
+/// WHAT THE CHECKS OF THIS CRATE SHARE: the agent's queue and its server are one for the whole process,
+/// so the checks take turns at them; and every round into the program is made while a check's own frames
+/// keep the program turning underneath it.
+#[cfg(test)]
+pub(crate) mod checks {
+    /// THE CHECKS TAKE TURNS at the agent's machinery: the queue and the server are one for the whole
+    /// process, and checks beside each other would take each other's calls.
+    pub(crate) fn take_your_turn() -> std::sync::MutexGuard<'static, ()> {
+        static TURNS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        TURNS.lock().expect("the turns of the checks are not held by a poisoned lock")
+    }
+
+    /// A CALL INTO THE PROGRAM while its frames run: the call is made on a thread of its own, and the
+    /// frames keep coming until it answers - work that touches the program is answered only from its
+    /// frames, so without them the call would never come back.
+    pub(crate) fn ask_while_the_program_runs<T: Send + 'static>(program: &mut qymcad::LiveLoop, asking: impl FnOnce() -> T + Send + 'static) -> T {
+        let (said, told) = std::sync::mpsc::channel();
+        std::thread::spawn(move || drop(said.send(asking())));
+        let began = std::time::Instant::now();
+        loop {
+            if let Ok(answer) = told.try_recv() {
+                return answer;
+            }
+            assert!(began.elapsed() < std::time::Duration::from_secs(180), "the call into the program was never answered");
+            program.frame();
+        }
+    }
+
+    /// WORK OVER THE AGENT'S SESSION, answered from rest: the work is handed to the queue as a tool's
+    /// work is, while the check's own frames keep the program turning underneath it.
+    pub(crate) fn ask_the_core<T: Send + 'static>(program: &mut qymcad::LiveLoop, work: impl FnOnce(&mut qymcad::AgentSession) -> T + Send + 'static) -> Result<T, String> {
+        ask_while_the_program_runs(program, || crate::tools::ask_the_program(work))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::checks::{ask_while_the_program_runs, take_your_turn};
     use std::io::{Read, Write};
     use std::net::TcpStream;
 
@@ -139,12 +175,6 @@ mod tests {
             Ok(mut wish) => *wish = qymcad::Serving { on, port, token: token.into() },
             Err(poisoned) => *poisoned.into_inner() = qymcad::Serving { on, port, token: token.into() },
         }
-    }
-
-    /// THE CHECKS TAKE TURNS at the server: the wish is one for the whole process.
-    fn take_your_turn() -> std::sync::MutexGuard<'static, ()> {
-        static TURNS: Mutex<()> = Mutex::new(());
-        TURNS.lock().expect("the turns of the checks are not held by a poisoned lock")
     }
 
     /// ONE REQUEST over the loopback, as a client would send it: answered with the status line, or
@@ -238,22 +268,6 @@ mod tests {
     fn the_said_of(body: &str) -> serde_json::Value {
         let said = if body.starts_with('{') { body.to_string() } else { body.lines().filter(|l| l.starts_with("data: ")).map(|l| &l[6..]).collect::<String>() };
         serde_json::from_str(&said).unwrap_or_else(|e| panic!("the body is not one JSON answer: {e}: {body:?}"))
-    }
-
-    /// A ROUND MADE WHILE THE PROGRAM'S FRAMES RUN: the round is made on a thread of its own, and the
-    /// frames keep coming until it answers - a tool that touches the program is answered only from its
-    /// frames, so without them the round would never come back.
-    fn ask_while_the_program_runs<T: Send + 'static>(program: &mut qymcad::LiveLoop, asking: impl FnOnce() -> T + Send + 'static) -> T {
-        let (said, told) = std::sync::mpsc::channel();
-        std::thread::spawn(move || drop(said.send(asking())));
-        let began = std::time::Instant::now();
-        loop {
-            if let Ok(answer) = told.try_recv() {
-                return answer;
-            }
-            assert!(began.elapsed() < Duration::from_secs(180), "the round was never answered");
-            program.frame();
-        }
     }
 
     /// CALL A TOOL as a client does, with the session and the token, while the program's frames run under

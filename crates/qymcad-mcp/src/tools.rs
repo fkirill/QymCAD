@@ -28,7 +28,7 @@ const THE_WAIT: Duration = Duration::from_secs(150);
 /// core - a real agent session - and what it answers comes back from there. A gesture of the work that
 /// raised a chooser is answered with the words that the program is asking the person; nothing is
 /// changed by such a call.
-fn ask_the_program<T: Send + 'static>(work: impl FnOnce(&mut qymcad::AgentSession) -> T + Send + 'static) -> Result<T, String> {
+pub(crate) fn ask_the_program<T: Send + 'static>(work: impl FnOnce(&mut qymcad::AgentSession) -> T + Send + 'static) -> Result<T, String> {
     let (said, tell) = std::sync::mpsc::channel();
     let (answer, told) = std::sync::mpsc::channel();
     let mut work = Some(work);
@@ -233,13 +233,21 @@ impl TheAgent {
     }
 
     /// THE PARAMETERS AN OPERATION TAKES, by its code: each field's name, its kind, and what it says. The
-    /// shapes are read from the tools themselves; a name outside the registry is refused in words.
+    /// shapes are read from the tools themselves - the command is taken as a person takes it, the fields
+    /// its bar puts up are answered, and the tool is put down again, the document as it stood. Where the
+    /// command does not open, nothing to work on, no parameter is answered.
     #[tool(name = "get-tool-schema", description = "The parameters an operation takes, by its code: each field's name, its kind, and what it says")]
     async fn get_tool_schema(&self, Parameters(GetToolSchemaParams { name }): Parameters<GetToolSchemaParams>) -> Result<CallToolResult, rmcp::ErrorData> {
         let Some(entry) = crate::registry::by_code(&name) else {
             return Ok(no_such_operation(&name));
         };
-        Ok(not_served(entry.command))
+        let code = entry.command.code;
+        Ok(match the_program_answers(move |core| crate::registry::parameters(core, code)).await {
+            Ok(fields) => {
+                CallToolResult::success(vec![ContentBlock::json(serde_json::to_value(&fields).expect("the fields are plain data and serialize")).expect("the fields are plain data and serialize")])
+            }
+            Err(said) => CallToolResult::error(vec![ContentBlock::text(said)]),
+        })
     }
 }
 
