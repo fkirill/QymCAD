@@ -47,7 +47,7 @@ pub(crate) fn call(core: &mut qymcad::AgentSession, name: &str, given: &serde_js
         return TheCall::Refused(format!("{name}: no operation of the program is named so; search-tool finds what the program offers"));
     };
     let fields = parameters(core, entry.command.code);
-    if let Err(words) = checked_against(given, &fields) {
+    if let Err(words) = checked_against(given, &fields, entry.takes) {
         return TheCall::Refused(words);
     }
     let Some(the_run) = entry.run else {
@@ -66,26 +66,45 @@ pub(crate) fn call(core: &mut qymcad::AgentSession, name: &str, given: &serde_js
 }
 
 /// THE PARAMETERS A CALL CARRIES, checked against the operation's own: every name must be one of the
-/// fields its bar puts up - and where it puts none up, the operation takes no parameter at all - and
-/// every value of the kind its field takes: a number field a number or an expression written in words, a
-/// text field words. A choice takes what it is given; the program's own words refuse what it will not
-/// take. What was expected is named in the refusal.
-fn checked_against(given: &serde_json::Value, fields: &[Parameter]) -> Result<(), String> {
+/// fields its bar puts up or the run takes, every value of the kind its parameter takes - a number field
+/// a number or an expression written in words, a text field words, places on the sheet as [x, y] pairs -
+/// and every parameter the run takes must be carried: a drawing without its places is refused before a
+/// gesture is made, the document left as it stood. What was expected is named in the refusal.
+fn checked_against(given: &serde_json::Value, fields: &[Parameter], takes: &[Take]) -> Result<(), String> {
     let Some(given) = given.as_object() else {
         return Err("the parameters must be given as named fields of the operation".into());
     };
+    let expected = || {
+        let mut names: Vec<&str> = fields.iter().map(|f| f.name.as_str()).collect();
+        names.extend(takes.iter().map(|t| t.name));
+        if names.is_empty() {
+            "no parameter at all".to_string()
+        } else {
+            names.join(", ")
+        }
+    };
     for (name, value) in given {
-        let Some(field) = fields.iter().find(|f| &f.name == name) else {
-            let expected = if fields.is_empty() { "no parameter at all".to_string() } else { fields.iter().map(|f| f.name.as_str()).collect::<Vec<_>>().join(", ") };
-            return Err(format!("{name}: the operation takes no parameter so; it takes {expected}"));
+        if let Some(field) = fields.iter().find(|f| &f.name == name) {
+            let wrong = match field.kind.as_str() {
+                "number" => !matches!(value, serde_json::Value::Number(_) | serde_json::Value::String(_)),
+                "text" => !value.is_string(),
+                _ => false,
+            };
+            if wrong {
+                return Err(format!("{name} takes a {}, and the call carried {value}", field.kind));
+            }
+            continue;
+        }
+        let Some(take) = takes.iter().find(|t| t.name == name) else {
+            return Err(format!("{name}: the operation takes no parameter so; it takes {}", expected()));
         };
-        let wrong = match field.kind.as_str() {
-            "number" => !matches!(value, serde_json::Value::Number(_) | serde_json::Value::String(_)),
-            "text" => !value.is_string(),
-            _ => false,
-        };
-        if wrong {
-            return Err(format!("{name} takes a {}, and the call carried {value}", field.kind));
+        if take.kind == "points" && !the_pairs(value).is_some_and(|p| p.len() >= 2) {
+            return Err(format!("{name} takes places on the sheet as [x, y] pairs, two at least, and the call carried {value}"));
+        }
+    }
+    for take in takes {
+        if !given.contains_key(take.name) {
+            return Err(format!("the operation takes {}, and the call carried none: it takes {}", take.name, expected()));
         }
     }
     Ok(())
@@ -106,6 +125,8 @@ pub(crate) struct Entry {
     /// ITS RUN over the agent's session; `None` where none is wired yet, and a call of the entry answers
     /// that no operation is served for its command.
     pub(crate) run: Option<Run>,
+    /// The parameters the run takes beside the bar's own fields; empty where the run is the take.
+    pub(crate) takes: &'static [Take],
 }
 
 impl Entry {
@@ -131,6 +152,28 @@ impl Entry {
     }
 }
 
+/// ONE PARAMETER A RUN TAKES, beside the fields the command's bar puts up: a drawing takes its places,
+/// a move its from and to. Named here, the parameter is required of every call and answered by
+/// get-tool-schema; the run reads it already checked.
+pub(crate) struct Take {
+    /// The parameter's name, as the call carries it.
+    pub(crate) name: &'static str,
+    /// What kind of value it takes: `points` - places on the sheet of the open sketch, each an [x, y]
+    /// pair.
+    pub(crate) kind: &'static str,
+}
+
+/// ONE RUN OF RICHER SHAPE, wired to its command: the run that works the command through its picks and
+/// values, over the take every command already has.
+pub(crate) struct Wired {
+    /// The command the run is wired to, by its code.
+    pub(crate) code: &'static str,
+    /// The run itself.
+    pub(crate) run: Run,
+    /// The parameters the run takes, beside the bar's own fields.
+    pub(crate) takes: &'static [Take],
+}
+
 /// THE REGISTRY, derived from the command catalogue: every command of the program, in the panel's order.
 /// Every entry is wired to a run - the take itself where no richer run is - so no command of the
 /// catalogue can stand outside the agent's reach; the guard below fails the day one does.
@@ -139,19 +182,117 @@ pub(crate) fn the_registry() -> &'static [Entry] {
     THE_REGISTRY.get_or_init(|| {
         qymcad::COMMANDS
             .iter()
-            .map(|command| Entry {
-                command,
-                synonyms: SYNONYMS.iter().find(|(code, _)| *code == command.code).map(|(_, words)| *words).unwrap_or(&[]),
-                run: RICHER_RUNS.iter().find(|(code, _)| *code == command.code).map(|(_, run)| *run).or(Some(the_take)),
+            .map(|command| {
+                let wired = RICHER_RUNS.iter().find(|w| w.code == command.code);
+                Entry {
+                    command,
+                    synonyms: SYNONYMS.iter().find(|(code, _)| *code == command.code).map(|(_, words)| *words).unwrap_or(&[]),
+                    run: wired.map(|w| w.run).or(Some(the_take)),
+                    takes: wired.map(|w| w.takes).unwrap_or(&[]),
+                }
             })
             .collect()
     })
 }
 
-/// THE RUNS OF RICHER SHAPE, by command code: a run that works the command through its picks and values,
-/// over the take every command already has. None is wired yet - the executors arrive with their own
-/// tasks, and the take serves every entry meanwhile.
-const RICHER_RUNS: &[(&str, Run)] = &[];
+/// THE RUNS OF RICHER SHAPE: the drawing tools of the sketch, each taking its places on the sheet. The
+/// rest of the operations keep the take until their own runs arrive.
+const RICHER_RUNS: &[Wired] = &[
+    Wired { code: "sketch.line", run: draw_a_chain, takes: &[Take { name: "points", kind: "points" }] },
+    Wired { code: "sketch.circle", run: draw_a_circle, takes: &[Take { name: "points", kind: "points" }] },
+    Wired { code: "sketch.rect", run: draw_a_rectangle, takes: &[Take { name: "points", kind: "points" }] },
+];
+
+/// DRAW A CHAIN OF LINES: the tool taken, every place of the sheet clicked in turn, the chain ended as a
+/// person ends it, with Esc. Two places make one line; more make a chain of them. The run answers only
+/// for a drawing that came to be - the sketch holds more lines after it than before.
+fn draw_a_chain(core: &mut qymcad::AgentSession, code: &str, given: &serde_json::Value) -> Answered {
+    let Some(entry) = by_code(code) else { return Answered::Refused(format!("{code}: no operation of the program is named so")) };
+    let Some(places) = the_places(given) else { return Answered::Refused("the line needs its places on the sheet, two at least".into()) };
+    let Some(sketch) = the_open_sketch(core) else { return Answered::Refused("no sketch is open to draw in - open one and draw again".to_string()) };
+    take_the_command(core, entry.command);
+    for (x, y) in &places {
+        core.click_on_sketch(*x, *y);
+    }
+    core.key(qymcad::Key::Escape);
+    match the_open_sketch(core) {
+        Some(after) if after.name == sketch.name && after.lines > sketch.lines => {
+            Answered::Ran(format!("a chain of {} drawn through {} places of {}", places.len().saturating_sub(1), places.len(), sketch.name))
+        }
+        _ => Answered::Refused(format!("nothing was drawn: {}", core.status())),
+    }
+}
+
+/// DRAW A CIRCLE: the tool taken, the centre clicked, the rim clicked where the circle is to reach; the
+/// sketch holds one circle more after it than before.
+fn draw_a_circle(core: &mut qymcad::AgentSession, code: &str, given: &serde_json::Value) -> Answered {
+    let Some(entry) = by_code(code) else { return Answered::Refused(format!("{code}: no operation of the program is named so")) };
+    let Some(places) = the_places(given) else { return Answered::Refused("the circle needs its places on the sheet: the centre, then the rim".into()) };
+    let [centre, rim, ..] = places.as_slice() else { return Answered::Refused("the circle needs two places: the centre, then the rim".into()) };
+    let Some(sketch) = the_open_sketch(core) else { return Answered::Refused("no sketch is open to draw in - open one and draw again".to_string()) };
+    take_the_command(core, entry.command);
+    core.click_on_sketch(centre.0, centre.1);
+    core.click_on_sketch(rim.0, rim.1);
+    core.key(qymcad::Key::Escape);
+    match the_open_sketch(core) {
+        Some(after) if after.name == sketch.name && after.circles > sketch.circles => {
+            Answered::Ran(format!("a circle drawn about ({}, {}) through ({}, {}) of {}", centre.0, centre.1, rim.0, rim.1, sketch.name))
+        }
+        _ => Answered::Refused(format!("nothing was drawn: {}", core.status())),
+    }
+}
+
+/// DRAW A RECTANGLE from its anchor to its corner, as the person clicks it into place; four lines more
+/// in the sketch after it than before.
+fn draw_a_rectangle(core: &mut qymcad::AgentSession, code: &str, given: &serde_json::Value) -> Answered {
+    let Some(entry) = by_code(code) else { return Answered::Refused(format!("{code}: no operation of the program is named so")) };
+    let Some(places) = the_places(given) else { return Answered::Refused("the rectangle needs its places on the sheet: the anchor, then the corner".into()) };
+    let [anchor, corner, ..] = places.as_slice() else { return Answered::Refused("the rectangle needs two places: the anchor, then the corner".into()) };
+    let Some(sketch) = the_open_sketch(core) else { return Answered::Refused("no sketch is open to draw in - open one and draw again".to_string()) };
+    take_the_command(core, entry.command);
+    core.click_on_sketch(anchor.0, anchor.1);
+    core.click_on_sketch(corner.0, corner.1);
+    core.key(qymcad::Key::Escape);
+    match the_open_sketch(core) {
+        Some(after) if after.name == sketch.name && after.lines >= sketch.lines + 4 => {
+            Answered::Ran(format!("a rectangle drawn from ({}, {}) to ({}, {}) of {}", anchor.0, anchor.1, corner.0, corner.1, sketch.name))
+        }
+        _ => Answered::Refused(format!("nothing was drawn: {}", core.status())),
+    }
+}
+
+/// THE SKETCH OPEN FOR EDITING, with its counts of what a drawing adds to; `None` when none is open.
+fn the_open_sketch(core: &mut qymcad::AgentSession) -> Option<TheOpenSketch> {
+    let document = core.document();
+    let name = document.editing.clone()?;
+    document.sketches.iter().find(|s| s.name == name).map(|s| TheOpenSketch { name: name.clone(), lines: s.lines, circles: s.circles })
+}
+
+/// THE SKETCH OPEN FOR EDITING, counted.
+struct TheOpenSketch {
+    name: String,
+    lines: usize,
+    circles: usize,
+}
+
+/// THE PLACES A CALL CARRIES, read as pairs of the sheet; `None` when the call carried none or a
+/// malformed list - the validation has said so in words already, and the run refuses what is left.
+fn the_places(given: &serde_json::Value) -> Option<Vec<(f64, f64)>> {
+    the_pairs(given.get("points")?)
+}
+
+/// THE PAIRS A VALUE HOLDS: places of the sheet, each an [x, y] pair of numbers; `None` at the first
+/// thing that is not one.
+fn the_pairs(value: &serde_json::Value) -> Option<Vec<(f64, f64)>> {
+    value
+        .as_array()?
+        .iter()
+        .map(|p| {
+            let pair = p.as_array()?;
+            Some((pair.first()?.as_f64()?, pair.get(1)?.as_f64()?))
+        })
+        .collect()
+}
 
 /// THE TAKE ITSELF, the run every command has: the command is taken into the hand through the command
 /// search, exactly as a person takes it. Where the command lands - its bar of options standing in the
@@ -279,7 +420,13 @@ pub(crate) fn parameters(core: &mut qymcad::AgentSession, code: &str) -> Vec<Par
     let mut put_up = the_fields_on_screen(core);
     put_up.retain(|f| !before.iter().any(|b| b.name == f.name && b.kind == f.kind));
     put_down_what_the_take_landed(core, &held);
-    put_up
+    let mut all = put_up;
+    all.extend(entry.takes.iter().map(|t| Parameter {
+        name: t.name.to_string(),
+        kind: t.kind.to_string(),
+        says: if t.kind == "points" { "places on the sheet of the open sketch, each an [x, y] pair".to_string() } else { String::new() },
+    }));
+    all
 }
 
 /// PUT DOWN WHAT THE TAKE LANDED, as a person puts a tool down: Esc, as many as the cancel ladder needs -
@@ -515,6 +662,60 @@ mod tests {
         let TheCall::Answered { status, problems, outcome } = &answered else { panic!("the take of the extrude over its own sketch did not run: {answered:?}") };
         assert!(!status.trim().is_empty() && !outcome.trim().is_empty(), "the answer carried no words: {answered:?}");
         assert!(problems.is_empty(), "the take itself must leave no problem: {answered:?}");
+    }
+
+    /// THE DRAWING TOOLS OF THE SKETCH, run as calls: the places on the sheet carried as the call's
+    /// parameters, the tool worked through its own gestures (a chain clicked place by place, a circle by
+    /// its centre and rim, a rectangle by its anchor and corner), and the drawing in the document after
+    /// it - counted, not assumed. A call that carries no places is refused in words before a gesture is
+    /// made, the document as it stood; so is a drawing with no sketch open.
+    #[test]
+    fn the_drawing_tools_draw_what_a_call_carries() {
+        let _turn = crate::checks::take_your_turn();
+        let mut program = qymcad::LiveLoop::start();
+        // A FIRST PART, A SKETCH ON XY, left open and empty
+        crate::checks::ask_the_core(&mut program, |core| {
+            let new_part = core.word("start-new-part");
+            core.press_word(&new_part);
+            let xy = core.word("plane-xy-table");
+            core.press_word(&xy);
+        })
+        .expect("the fixture was built");
+        let empty = crate::checks::ask_the_core(&mut program, |core| core.document()).expect("the document was read");
+        assert!(empty.editing.is_some(), "no sketch stands open on the fixture");
+        // A CALL WITHOUT ITS PLACES is refused in words naming what was expected, the document as it stood
+        let refused = crate::checks::ask_the_core(&mut program, |core| call(core, "sketch.line", &serde_json::json!({}))).expect("the call answered");
+        let TheCall::Refused(words) = &refused else { panic!("a drawing without its places was not refused: {refused:?}") };
+        assert!(words.contains("points") && words.contains("takes"), "the refusal did not name what was expected: {words}");
+        let after = crate::checks::ask_the_core(&mut program, |core| core.document()).expect("the document was read");
+        assert_eq!(after, empty, "a refused drawing changed the document");
+        // THE LINE: two places, one line more
+        let answered = crate::checks::ask_the_core(&mut program, |core| call(core, "sketch.line", &serde_json::json!({ "points": [[0.0, 0.0], [40.0, 0.0]] }))).expect("the call answered");
+        assert!(matches!(answered, TheCall::Answered { .. }), "the line did not run: {answered:?}");
+        let one_line = crate::checks::ask_the_core(&mut program, |core| core.document()).expect("the document was read");
+        fn of(doc: &qymcad::Document) -> &qymcad::SketchInfo {
+            doc.sketches.iter().find(|s| Some(&s.name) == doc.editing.as_ref()).expect("the open sketch")
+        }
+        assert_eq!(of(&one_line).lines, of(&empty).lines + 1, "the line did not land in the sketch");
+        assert_eq!(of(&one_line).circles, of(&empty).circles, "the line drew a circle");
+        // THE CIRCLE: a centre and a rim, one circle more
+        let answered = crate::checks::ask_the_core(&mut program, |core| call(core, "sketch.circle", &serde_json::json!({ "points": [[0.0, 0.0], [10.0, 0.0]] }))).expect("the call answered");
+        assert!(matches!(answered, TheCall::Answered { .. }), "the circle did not run: {answered:?}");
+        let one_circle = crate::checks::ask_the_core(&mut program, |core| core.document()).expect("the document was read");
+        assert_eq!(of(&one_circle).circles, of(&one_line).circles + 1, "the circle did not land in the sketch");
+        // THE RECTANGLE: an anchor and a corner, four lines more
+        let answered = crate::checks::ask_the_core(&mut program, |core| call(core, "sketch.rect", &serde_json::json!({ "points": [[0.0, 0.0], [40.0, 30.0]] }))).expect("the call answered");
+        assert!(matches!(answered, TheCall::Answered { .. }), "the rectangle did not run: {answered:?}");
+        let boxed = crate::checks::ask_the_core(&mut program, |core| core.document()).expect("the document was read");
+        assert!(of(&boxed).lines >= of(&one_circle).lines + 4, "the rectangle did not land in the sketch: {} lines", of(&boxed).lines);
+        // A DRAWING WITH NO SKETCH OPEN is refused in words, the document as it stood
+        let mut bare = qymcad::LiveLoop::start();
+        let bare_as_it_stood = crate::checks::ask_the_core(&mut bare, |core| core.document()).expect("the document was read");
+        let refused = crate::checks::ask_the_core(&mut bare, |core| call(core, "sketch.line", &serde_json::json!({ "points": [[0.0, 0.0], [40.0, 0.0]] }))).expect("the call answered");
+        let TheCall::Refused(words) = &refused else { panic!("a drawing with no sketch open was not refused: {refused:?}") };
+        assert!(words.contains("sketch"), "the refusal did not say what was missing: {words}");
+        let after = crate::checks::ask_the_core(&mut bare, |core| core.document()).expect("the document was read");
+        assert_eq!(after, bare_as_it_stood, "a refused drawing changed the document");
     }
 
     /// THE PROBLEMS THAT STAND AFTER A CALL are carried in its answer, in the words the acceptance
