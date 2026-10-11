@@ -64,17 +64,6 @@ fn no_such_operation(name: &str) -> CallToolResult {
     CallToolResult::error(vec![ContentBlock::text(format!("{name}: no operation of the program is named so; search-tool finds what the program offers"))])
 }
 
-/// A COMMAND OF THE PROGRAM THE AGENT CANNOT RUN: the registry of callable operations is derived from the
-/// program's own sources, and this command stands outside it. The name is known to the program - said so,
-/// with where its help is - and nothing runs; the document is left as it stood.
-fn not_served(command: &qymcad::Command) -> CallToolResult {
-    CallToolResult::error(vec![ContentBlock::text(format!(
-        "{} ({}) is a command of the program, and the agent serves no operation for it; read-tool-help tells what it does, search-tool finds what the program offers",
-        command.name(),
-        command.code
-    ))])
-}
-
 /// WHAT search-tool TAKES.
 #[derive(serde::Deserialize, schemars::JsonSchema, Default)]
 struct SearchToolParams {
@@ -217,21 +206,22 @@ impl TheAgent {
     }
 
     /// RUN AN OPERATION OF THE PROGRAM by its code and parameters, as a person runs it through the same
-    /// interface. The registry of runnable operations is derived from the program's own sources; a name
-    /// outside it is refused in words, and a name the registry holds no run for is said so. The document
-    /// is left as it stood by every refusal.
-    #[tool(name = "call-tool", description = "Run an operation of the program by its code and parameters, as a person runs it through the same interface")]
+    /// interface. The call is validated against the operation's own schema, run through the agent's
+    /// session, waited to rest, and answered with the status line, the problems the post-call checks
+    /// found, and the operation's own outcome. Every refusal - an unknown name, a parameter the operation
+    /// does not take, a value of the wrong kind, the program's own refusal - is said in words, and the
+    /// document is left as it stood.
+    #[tool(
+        name = "call-tool",
+        description = "Run an operation of the program by its code and parameters, as a person runs it through the same interface; the answer carries the status line, the problems found, and the operation's own outcome"
+    )]
     async fn call_tool(&self, Parameters(CallToolParams { name, parameters }): Parameters<CallToolParams>) -> Result<CallToolResult, rmcp::ErrorData> {
-        let Some(entry) = crate::registry::by_code(&name) else {
-            return Ok(no_such_operation(&name));
-        };
-        let Some(run) = entry.run else {
-            return Ok(not_served(entry.command));
-        };
-        let code = entry.command.code;
-        let parameters = serde_json::Value::Object(parameters.unwrap_or_default());
-        Ok(match the_program_answers(move |core| run(core, code, &parameters)).await {
-            Ok(said) => CallToolResult::success(vec![ContentBlock::text(said)]),
+        let given = serde_json::Value::Object(parameters.unwrap_or_default());
+        Ok(match the_program_answers(move |core| crate::registry::call(core, &name, &given)).await {
+            Ok(crate::registry::TheCall::Answered { status, problems, outcome }) => {
+                CallToolResult::success(vec![ContentBlock::json(serde_json::json!({ "status": status, "problems": problems, "outcome": outcome })).expect("the answer is plain data and serializes")])
+            }
+            Ok(crate::registry::TheCall::Refused(words)) => CallToolResult::error(vec![ContentBlock::text(words)]),
             Err(said) => CallToolResult::error(vec![ContentBlock::text(said)]),
         })
     }

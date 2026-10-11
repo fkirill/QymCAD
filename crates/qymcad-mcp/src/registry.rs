@@ -11,9 +11,84 @@
 //! nor the help holds any.
 
 /// HOW AN OPERATION RUNS: its gestures over the agent's session - the strokes a person makes through the
-/// same interface - told its own code and the parameters the call carried. The answer is the operation's
-/// outcome in words.
-pub(crate) type Run = fn(&mut qymcad::AgentSession, &str, &serde_json::Value) -> String;
+/// same interface - told its own code and the parameters the call carried.
+pub(crate) type Run = fn(&mut qymcad::AgentSession, &str, &serde_json::Value) -> Answered;
+
+/// WHAT A RUN ANSWERS: its outcome in words, or the program's own refusal - nothing was changed by a
+/// refusal.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Answered {
+    /// The operation ran; these are its words.
+    Ran(String),
+    /// The operation was refused, in the words the program itself says; the document stands as it did.
+    Refused(String),
+}
+
+/// ONE CALL INTO AN OPERATION, from its validation to its answer: the status line as the program reports
+/// it once the call has run and come to rest, the problems the post-call checks found, and the
+/// operation's own outcome. A refusal carries its words instead, and nothing was changed by it.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum TheCall {
+    /// The call ran and was answered from rest.
+    Answered { status: String, problems: Vec<String>, outcome: String },
+    /// The call was refused - the name unknown to the registry, a parameter the operation does not take,
+    /// a value of the wrong kind, or the program's own refusal - in these words.
+    Refused(String),
+}
+
+/// CALL AN OPERATION by its name, through the frame every call runs in: the parameters the call carried
+/// are checked against the operation's own schema - read from the live tool, the reading leaving the
+/// document as it stood - then the entry's run works its gestures over the agent's session, the program
+/// is waited to rest, and the answer is the status line, the problems found, and the outcome. Every
+/// refusal is said in words and leaves the document as it stood.
+pub(crate) fn call(core: &mut qymcad::AgentSession, name: &str, given: &serde_json::Value) -> TheCall {
+    let Some(entry) = by_code(name) else {
+        return TheCall::Refused(format!("{name}: no operation of the program is named so; search-tool finds what the program offers"));
+    };
+    let fields = parameters(core, entry.command.code);
+    if let Err(words) = checked_against(given, &fields) {
+        return TheCall::Refused(words);
+    }
+    let Some(the_run) = entry.run else {
+        return TheCall::Refused(format!(
+            "{} ({}) is a command of the program, and the agent serves no operation for it; read-tool-help tells what it does, search-tool finds what the program offers",
+            entry.command.name(),
+            entry.command.code
+        ));
+    };
+    let answered = the_run(core, entry.command.code, given);
+    let status = core.status();
+    match answered {
+        Answered::Ran(outcome) => TheCall::Answered { status, problems: Vec::new(), outcome },
+        Answered::Refused(words) => TheCall::Refused(words),
+    }
+}
+
+/// THE PARAMETERS A CALL CARRIES, checked against the operation's own: every name must be one of the
+/// fields its bar puts up - and where it puts none up, the operation takes no parameter at all - and
+/// every value of the kind its field takes: a number field a number or an expression written in words, a
+/// text field words. A choice takes what it is given; the program's own words refuse what it will not
+/// take. What was expected is named in the refusal.
+fn checked_against(given: &serde_json::Value, fields: &[Parameter]) -> Result<(), String> {
+    let Some(given) = given.as_object() else {
+        return Err("the parameters must be given as named fields of the operation".into());
+    };
+    for (name, value) in given {
+        let Some(field) = fields.iter().find(|f| &f.name == name) else {
+            let expected = if fields.is_empty() { "no parameter at all".to_string() } else { fields.iter().map(|f| f.name.as_str()).collect::<Vec<_>>().join(", ") };
+            return Err(format!("{name}: the operation takes no parameter so; it takes {expected}"));
+        };
+        let wrong = match field.kind.as_str() {
+            "number" => !matches!(value, serde_json::Value::Number(_) | serde_json::Value::String(_)),
+            "text" => !value.is_string(),
+            _ => false,
+        };
+        if wrong {
+            return Err(format!("{name} takes a {}, and the call carried {value}", field.kind));
+        }
+    }
+    Ok(())
+}
 
 /// THE SYNONYMS OF THE REGISTRY'S OWN, by command code: words a client looks for an operation by that
 /// neither its code nor its names in any language carry (`fillet` by `round`). The registry is derived;
@@ -78,13 +153,18 @@ pub(crate) fn the_registry() -> &'static [Entry] {
 const RICHER_RUNS: &[(&str, Run)] = &[];
 
 /// THE TAKE ITSELF, the run every command has: the command is taken into the hand through the command
-/// search, exactly as a person takes it, and what the program then says is the answer. The command's bar
-/// of options stands in the window for the caller to work with - Enter applies it, Esc puts it down, as
-/// the person's keys do.
-fn the_take(core: &mut qymcad::AgentSession, code: &str, _parameters: &serde_json::Value) -> String {
-    let Some(entry) = by_code(code) else { return format!("{code}: no operation of the program is named so") };
+/// search, exactly as a person takes it. Where the command lands - its bar of options standing in the
+/// window, Enter applying it and Esc putting it down, as the person's keys do - the take has run; where
+/// the program takes nothing (nothing to work on), it has refused in its own words, and nothing changed.
+fn the_take(core: &mut qymcad::AgentSession, code: &str, _parameters: &serde_json::Value) -> Answered {
+    let Some(entry) = by_code(code) else { return Answered::Refused(format!("{code}: no operation of the program is named so")) };
+    let held = core.in_hand();
     take_the_command(core, entry.command);
-    core.status()
+    let said = core.status();
+    if core.in_hand().iter().eq(held.iter()) {
+        return Answered::Refused(said);
+    }
+    Answered::Ran(format!("{} is taken; its bar stands in the window - fill its fields and press Enter to apply, Esc puts it down", entry.command.name()))
 }
 
 /// THE ENTRY OF A CODE, as `call-tool` names an operation.
@@ -345,19 +425,94 @@ mod tests {
         }
         let _turn = crate::checks::take_your_turn();
         let mut program = qymcad::LiveLoop::start();
+        let mut landed = 0;
         for entry in the_registry() {
             let code = entry.command.code;
-            let said = crate::checks::ask_the_core(&mut program, move |core| {
+            let answered = crate::checks::ask_the_core(&mut program, move |core| {
                 let the_run = by_code(code).expect("the code names an entry").run.expect("the entry is wired");
-                let said = the_run(core, code, &serde_json::json!({}));
+                let answered = the_run(core, code, &serde_json::json!({}));
                 // the take leaves the command in the hand, as a person's take does; the check puts it
                 // down, so the next take starts from bars as they stood
                 let held: Vec<String> = Vec::new();
                 put_down_what_the_take_landed(core, &held);
-                said
+                answered
             })
             .expect("the run answered");
+            let said = match &answered {
+                Answered::Ran(outcome) => {
+                    landed += 1;
+                    outcome.clone()
+                }
+                Answered::Refused(words) => words.clone(),
+            };
             assert!(!said.is_empty(), "{} said nothing when it ran", entry.command.code);
         }
+        assert!(landed >= 20, "only {landed} of the commands landed their tool on a bare start; the runs have gone mute");
+    }
+
+    /// THE FRAME OF A CALL, checked at each of its refusals and at its answer: a name no operation
+    /// carries, a parameter the operation does not take, a value of the wrong kind, an operation the
+    /// program itself refuses (a command that cannot work on what stands lands nothing) - each answered
+    /// in words naming what was expected, each leaving the document as it stood. A call that runs is
+    /// answered from rest with the status line, the problems found, and the operation's own outcome.
+    #[test]
+    fn a_call_is_validated_run_and_answered_with_the_program_s_own_words() {
+        let _turn = crate::checks::take_your_turn();
+        let mut program = qymcad::LiveLoop::start();
+        crate::checks::ask_the_core(&mut program, |core| {
+            let new_part = core.word("start-new-part");
+            core.press_word(&new_part);
+            let xy = core.word("plane-xy-table");
+            core.press_word(&xy);
+            let rect = core.word("tb-rect-hint");
+            core.press_hint(&rect);
+            core.click_on_sketch(0.0, 0.0).click_on_sketch(40.0, 30.0);
+            let finish = core.word("wb-finish");
+            core.press_word_near(&finish, qymcad::pos2(0.0, 0.0));
+        })
+        .expect("the fixture was built");
+        let the_document_as_it_stood = crate::checks::ask_the_core(&mut program, |core| core.document()).expect("the document was read");
+        // A NAME NO OPERATION CARRIES
+        let refused = crate::checks::ask_the_core(&mut program, |core| call(core, "no.such-thing", &serde_json::json!({}))).expect("the call answered");
+        let TheCall::Refused(words) = &refused else { panic!("an unknown name was not refused: {refused:?}") };
+        assert!(words.contains("no.such-thing") && words.contains("search-tool"), "the refusal did not name what was asked and where to look: {words}");
+        // A PARAMETER THE OPERATION DOES NOT TAKE: the extrude's own fields are read from the live tool,
+        // and a name among them is not
+        let fields = crate::checks::ask_the_core(&mut program, |core| parameters(core, "part.extrude")).expect("the schema was read");
+        assert!(!fields.is_empty(), "the extrude put up no field on the finished sketch");
+        let carried: Vec<(String, serde_json::Value)> = vec![("a-parameter-it-takes-not".to_string(), serde_json::json!(1)), (fields[0].name.clone(), serde_json::json!({ "not": "a value" }))];
+        for (name, value) in carried {
+            let mut given = serde_json::Map::new();
+            given.insert(name.clone(), value);
+            let given = serde_json::Value::Object(given);
+            let refused = crate::checks::ask_the_core(&mut program, move |core| call(core, "part.extrude", &given)).expect("the call answered");
+            let TheCall::Refused(words) = &refused else { panic!("the parameter {name:?} was not refused: {refused:?}") };
+            assert!(words.contains(&name), "the refusal did not name the parameter: {words}");
+            assert!(words.contains("takes"), "the refusal did not say what the operation takes: {words}");
+        }
+        // AN OPERATION THE PROGRAM ITSELF REFUSES: a command that works only on what stands selected -
+        // over a bare program nothing is - lands nothing, and the program's own words say why
+        let mut bare = qymcad::LiveLoop::start();
+        let bare_as_it_stood = crate::checks::ask_the_core(&mut bare, |core| core.document()).expect("the document was read");
+        let refused = crate::checks::ask_the_core(&mut bare, |core| call(core, "part.piece-to-part", &serde_json::json!({}))).expect("the call answered");
+        let TheCall::Refused(words) = &refused else { panic!("an operation with nothing selected to work on was not refused: {refused:?}") };
+        assert!(!words.trim().is_empty(), "the program's refusal said nothing");
+        let after = crate::checks::ask_the_core(&mut bare, |core| core.document()).expect("the document was read");
+        assert_eq!(after, bare_as_it_stood, "a refused call changed the document");
+        drop(bare);
+        // THE DOCUMENT STOOD AS IT DID through every refusal, and a call that runs answers from rest
+        let after = crate::checks::ask_the_core(&mut program, |core| core.document()).expect("the document was read");
+        assert_eq!(after, the_document_as_it_stood, "a refused call changed the document");
+        let answered = crate::checks::ask_the_core(&mut program, |core| {
+            let answered = call(core, "part.extrude", &serde_json::json!({}));
+            // the take leaves the command in the hand; the check puts it down, the document as it stood
+            let held: Vec<String> = Vec::new();
+            put_down_what_the_take_landed(core, &held);
+            answered
+        })
+        .expect("the call answered");
+        let TheCall::Answered { status, problems, outcome } = &answered else { panic!("the take of the extrude over its own sketch did not run: {answered:?}") };
+        assert!(!status.trim().is_empty() && !outcome.trim().is_empty(), "the answer carried no words: {answered:?}");
+        assert!(problems.is_empty(), "the take itself must leave no problem: {answered:?}");
     }
 }

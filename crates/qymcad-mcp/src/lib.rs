@@ -352,12 +352,12 @@ mod tests {
         }
         // A COMMAND OF THE CATALOGUE RUNS: the registry wires every command to a run - the take itself -
         // so call-tool lands the command's bar in the person's window, exactly as a person's take does,
-        // and answers what the program then says; a command that cannot work on what stands says so in
-        // its own words rather than failing
-        let said = call_a_tool(&mut program, port, &session, "call-tool", &serde_json::json!({ "name": "sketch.line", "parameters": {} }).to_string());
+        // and answers from rest with the status line and the outcome; a command that cannot work on what
+        // stands (a line with no sketch to draw in) is refused in the program's own words
+        let said = call_a_tool(&mut program, port, &session, "call-tool", &serde_json::json!({ "name": "part.box", "parameters": {} }).to_string());
         assert!(!said["isError"].as_bool().unwrap_or(true), "the take of a command of the catalogue answered as an error: {said}");
         let taken = said["content"][0]["text"].as_str().expect("the take is said in words");
-        assert!(!taken.trim().is_empty(), "the take said nothing");
+        assert!(taken.contains("\"outcome\"") && taken.contains("\"status\""), "the answer does not carry the frame's parts: {taken}");
         wish(false, port, "the-token");
     }
 }
