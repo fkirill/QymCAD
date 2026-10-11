@@ -234,6 +234,13 @@ impl<'a> AgentSession<'a> {
         let app = &mut *self.app;
         super::io_jobs::write_exact_to(&mut app.live, &mut app.project, &mut app.regen, &mut app.status, std::path::Path::new(path), &job);
     }
+
+    /// IMPORT THE FILE AT `path`, as the answer to the import chooser does - the chooser never put up, the
+    /// path carried by the call itself. What the file holds goes to the background; settle waits it out, and
+    /// a mesh then stands in its window of scale until Enter takes it in, as it does for a person.
+    pub fn import(&mut self, path: &str) {
+        super::import_door::import_answer(qymcad_ui_state::Want::Anything)(&mut self.app, std::path::PathBuf::from(path));
+    }
 }
 
 /// THE DOCUMENT AS THE PROGRAM HOLDS IT, read and never written: what a person could find out by looking at the
