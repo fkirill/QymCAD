@@ -195,8 +195,10 @@ pub(crate) fn the_registry() -> &'static [Entry] {
     })
 }
 
-/// THE RUNS OF RICHER SHAPE: the drawing tools of the sketch, each taking its places on the sheet. The
-/// rest of the operations keep the take until their own runs arrive.
+/// THE RUNS OF RICHER SHAPE: the sketch operations that work by their own gestures - the drawing tools
+/// each taking its places on the sheet, the dimensions measured and held at their value, the click
+/// operations (trim, extend, break) working on what the places name. The rest of the operations keep
+/// the take until their own runs arrive.
 const RICHER_RUNS: &[Wired] = &[
     Wired { code: "sketch.line", run: draw_a_chain, takes: &[Take { name: "points", kind: "points" }] },
     Wired { code: "sketch.circle", run: draw_a_circle, takes: &[Take { name: "points", kind: "points" }] },
@@ -209,6 +211,12 @@ const RICHER_RUNS: &[Wired] = &[
     Wired { code: "sketch.ellipse", run: draw_by_clicks, takes: &[Take { name: "points", kind: "points" }] },
     Wired { code: "sketch.spline", run: draw_a_spline, takes: &[Take { name: "points", kind: "points" }] },
     Wired { code: "sketch.text", run: write_a_text, takes: &[Take { name: "points", kind: "points" }, Take { name: "text", kind: "text" }] },
+    Wired { code: "sketch.dim", run: place_a_dimension, takes: &[Take { name: "points", kind: "points" }, Take { name: "value", kind: "text" }] },
+    Wired { code: "sketch.dim-angle", run: place_a_dimension, takes: &[Take { name: "points", kind: "points" }, Take { name: "value", kind: "text" }] },
+    Wired { code: "sketch.dim-radius", run: place_a_dimension, takes: &[Take { name: "points", kind: "points" }, Take { name: "value", kind: "text" }] },
+    Wired { code: "sketch.trim", run: trim_the_segments, takes: &[Take { name: "points", kind: "points" }] },
+    Wired { code: "sketch.extend", run: extend_a_line, takes: &[Take { name: "points", kind: "points" }] },
+    Wired { code: "sketch.break", run: break_a_line, takes: &[Take { name: "points", kind: "points" }] },
 ];
 
 /// DRAW A CHAIN OF LINES: the tool taken, every place of the sheet clicked in turn, the chain ended as a
@@ -343,6 +351,119 @@ fn write_a_text(core: &mut qymcad::AgentSession, code: &str, given: &serde_json:
             Answered::Ran(format!("the text {words:?} written at ({}, {}) of {}", at.0, at.1, sketch.name))
         }
         _ => Answered::Refused(format!("nothing was written: {}", core.status())),
+    }
+}
+
+/// PLACE A DIMENSION and hold what it measures at the value the call carried: the tool taken, the
+/// places that name what is measured clicked in turn - a line for its length, two lines for the angle
+/// between them, a circle for its diameter - and the last place clicked where the dimension is to stand
+/// (a diameter needs no placing click; its field is up as the circle is read). The placing focuses the
+/// value's field, as it does for a person: the value typed, Enter, the tool put down. The sketch holds
+/// a constraint of the dimension's own kind after it - a Distance, an AngleLines, a Diameter.
+fn place_a_dimension(core: &mut qymcad::AgentSession, code: &str, given: &serde_json::Value) -> Answered {
+    let Some(entry) = by_code(code) else { return Answered::Refused(format!("{code}: no operation of the program is named so")) };
+    let Some(places) = the_places(given) else {
+        return Answered::Refused("the dimension needs its places on the sheet: what it measures, then where it stands".into());
+    };
+    let Some(value) = the_words_of(given, "value") else { return Answered::Refused("the dimension needs the value it is to hold".into()) };
+    let Some(sketch) = the_open_sketch(core) else { return Answered::Refused("no sketch is open to measure in - open one and measure again".to_string()) };
+    let kind = match code {
+        "sketch.dim-angle" => "AngleLines",
+        "sketch.dim-radius" => "Diameter",
+        _ => "Distance",
+    };
+    take_the_command(core, entry.command);
+    for (x, y) in &places {
+        core.click_on_sketch(*x, *y);
+    }
+    core.type_text(&value);
+    core.key(qymcad::Key::Enter);
+    core.key(qymcad::Key::Escape);
+    match the_open_sketch(core) {
+        Some(after) if after.name == sketch.name && after.constraints > sketch.constraints && after.constraint_kinds.iter().any(|k| k == kind) => {
+            Answered::Ran(format!("a {} of {value} placed over {} place(s) of {}", kind, places.len(), sketch.name))
+        }
+        _ => Answered::Refused(format!("nothing was measured: {}", core.status())),
+    }
+}
+
+/// TRIM THE SEGMENTS under the carried places: the tool taken, every place clicked - the segment under
+/// each is removed up to the intersections it crosses, its end pulled back to the crossing - the tool
+/// put down with Esc. The run answers only for a trim that bit: the sheet is not what it was after it;
+/// a segment that crosses nothing is refused in the program's own words.
+fn trim_the_segments(core: &mut qymcad::AgentSession, code: &str, given: &serde_json::Value) -> Answered {
+    let Some(entry) = by_code(code) else { return Answered::Refused(format!("{code}: no operation of the program is named so")) };
+    let Some(places) = the_places(given) else { return Answered::Refused("the trim needs its places on the sheet: a place on each segment to cut".into()) };
+    let Some(sketch) = the_open_sketch(core) else { return Answered::Refused("no sketch is open to trim in - open one and trim again".to_string()) };
+    take_the_command(core, entry.command);
+    for (x, y) in &places {
+        core.click_on_sketch(*x, *y);
+    }
+    core.key(qymcad::Key::Escape);
+    let bit = |s: &qymcad::SketchInfo| {
+        let mut places = s.places.to_vec();
+        places.sort_by(|a, b| a[0].total_cmp(&b[0]).then(a[1].total_cmp(&b[1])));
+        (things(s), places)
+    };
+    match the_open_sketch(core) {
+        Some(after) if after.name == sketch.name && bit(&after) != bit(&sketch) => Answered::Ran(format!("{} place(s) trimmed of {}", places.len(), sketch.name)),
+        _ => Answered::Refused(format!("nothing was trimmed: {}", core.status())),
+    }
+}
+
+/// EXTEND A LINE to what it must reach: the line selected as a person selects it - the arrow of the
+/// panel, a click on the line - the selection standing while the command is taken through the search,
+/// the pointer held at what the line must reach, Enter, the tool put down. The run answers only for an
+/// extension that reached: a point of the sketch stands at the target after it that stood at no such
+/// place before.
+fn extend_a_line(core: &mut qymcad::AgentSession, code: &str, given: &serde_json::Value) -> Answered {
+    let Some(entry) = by_code(code) else { return Answered::Refused(format!("{code}: no operation of the program is named so")) };
+    let Some(places) = the_places(given) else {
+        return Answered::Refused("the extend needs its places on the sheet: the line, then what it must reach".into());
+    };
+    let [on, to, ..] = places.as_slice() else {
+        return Answered::Refused("the extend needs two places: the line, then what it must reach".into());
+    };
+    let Some(sketch) = the_open_sketch(core) else { return Answered::Refused("no sketch is open to extend in - open one and extend again".to_string()) };
+    let arrow = core.word("tb-select-hint");
+    core.press_hint(&arrow);
+    core.click_on_sketch(on.0, on.1);
+    take_the_command(core, entry.command);
+    let at = core.on_sketch(to.0, to.1);
+    core.move_to(at);
+    core.key(qymcad::Key::Enter);
+    core.key(qymcad::Key::Escape);
+    let reached = |s: &qymcad::SketchInfo| s.places.iter().any(|p| (p[0] - to.0).abs() < 1e-6 && (p[1] - to.1).abs() < 1e-6);
+    match the_open_sketch(core) {
+        Some(after) if after.name == sketch.name && reached(&after) && !reached(&sketch) => {
+            Answered::Ran(format!("the line at ({}, {}) extended to ({}, {}) of {}", on.0, on.1, to.0, to.1, sketch.name))
+        }
+        _ => Answered::Refused(format!("nothing was extended: {}", core.status())),
+    }
+}
+
+/// BREAK A LINE at the carried place: the tool taken, the place clicked where the line is to split, the
+/// tool put down. One line has become two - the sketch holds a line more after it than before.
+fn break_a_line(core: &mut qymcad::AgentSession, code: &str, given: &serde_json::Value) -> Answered {
+    let Some(entry) = by_code(code) else { return Answered::Refused(format!("{code}: no operation of the program is named so")) };
+    let Some(places) = the_places(given) else { return Answered::Refused("the break needs its place on the sheet: where the line is to split".into()) };
+    let [at, ..] = places.as_slice() else { return Answered::Refused("the break needs its place on the sheet: where the line is to split".into()) };
+    let Some(sketch) = the_open_sketch(core) else { return Answered::Refused("no sketch is open to break in - open one and break again".to_string()) };
+    take_the_command(core, entry.command);
+    core.click_on_sketch(at.0, at.1);
+    core.key(qymcad::Key::Escape);
+    match the_open_sketch(core) {
+        Some(after) if after.name == sketch.name && after.lines > sketch.lines => Answered::Ran(format!("the line at ({}, {}) broken in two of {}", at.0, at.1, sketch.name)),
+        _ => Answered::Refused(format!("nothing was broken: {}", core.status())),
+    }
+}
+
+/// THE WORDS A PARAMETER CARRIES, read whether the call gave them as words or as a number: a size or an
+/// angle arrives either way, and the field it is typed into takes its digits all the same.
+fn the_words_of(given: &serde_json::Value, name: &str) -> Option<String> {
+    match given.get(name)? {
+        serde_json::Value::String(s) => Some(s.clone()),
+        other => Some(other.to_string()),
     }
 }
 
@@ -697,8 +818,9 @@ mod tests {
             assert!(!said.is_empty(), "{} said nothing when it ran", entry.command.code);
         }
         assert!(landed >= 15, "only {landed} of the take-only commands landed their tool on a bare start; the runs have gone mute");
-        // OVER AN OPEN SKETCH every run that takes parameters runs with them: the drawing tools land
-        // their own kinds, their places carried as the call carries them
+        // OVER AN OPEN SKETCH every run that takes parameters runs with what its own work needs: the
+        // drawing tools with places of their own aside of the ones before, the operations that work on
+        // what stands with a fixture the registry's own calls draw for them beside those places
         let mut sketching = qymcad::LiveLoop::start();
         crate::checks::ask_the_core(&mut sketching, |core| {
             let new_part = core.word("start-new-part");
@@ -707,24 +829,70 @@ mod tests {
             core.press_word(&xy);
         })
         .expect("the fixture was built");
+        /// WHAT THE RUN OF `code` IS GIVEN over the open sketch, and what it needs drawn first: a
+        /// fixture drawn beside the sample's own places by the registry's own drawing calls, and the
+        /// parameters the run takes. `aside` is the x the fixture lives at, clear of the ones before it;
+        /// every fixture stands at y 100, clear of the axes - the snap reach of a view held over a wide
+        /// sheet is wide in the sheet's own units, and a place a hair from the axis lands on it.
+        fn the_sample_for(core: &mut qymcad::AgentSession, code: &str, aside: f64) -> serde_json::Value {
+            let line = |core: &mut qymcad::AgentSession, a: (f64, f64), b: (f64, f64)| {
+                call(core, "sketch.line", &serde_json::json!({ "points": [[a.0, a.1], [b.0, b.1]] }));
+            };
+            match code {
+                // THE DIMENSIONS: a line to measure for its length, two at a free angle between them, a
+                // circle for its diameter - each held at the value it already measures, so the solve
+                // keeps what the fixture drew, and placed to stand clear (y 50) of all geometry
+                "sketch.dim" => {
+                    line(core, (aside, 100.0), (aside + 40.0, 100.0));
+                    serde_json::json!({ "points": [[aside + 20.0, 100.0], [aside + 20.0, 50.0]], "value": "40" })
+                }
+                "sketch.dim-angle" => {
+                    line(core, (aside, 100.0), (aside + 30.0, 100.0));
+                    line(core, (aside, 100.0), (aside + 10.0, 120.0));
+                    serde_json::json!({ "points": [[aside + 15.0, 100.0], [aside + 5.0, 110.0], [aside + 5.0, 50.0]], "value": "63" })
+                }
+                "sketch.dim-radius" => {
+                    call(core, "sketch.circle", &serde_json::json!({ "points": [[aside, 110.0], [aside + 10.0, 110.0]] }));
+                    serde_json::json!({ "points": [[aside + 10.0, 110.0]], "value": "20" })
+                }
+                // THE CLICK OPERATIONS: a crossing for the trim to cut back to, a short line with a wall
+                // across it for the extend to reach, a line for the break to split
+                "sketch.trim" => {
+                    line(core, (aside, 100.0), (aside + 40.0, 140.0));
+                    line(core, (aside, 140.0), (aside + 40.0, 100.0));
+                    serde_json::json!({ "points": [[aside + 30.0, 110.0]] })
+                }
+                "sketch.extend" => {
+                    line(core, (aside, 100.0), (aside + 20.0, 100.0));
+                    line(core, (aside + 30.0, 95.0), (aside + 30.0, 115.0));
+                    serde_json::json!({ "points": [[aside + 10.0, 100.0], [aside + 30.0, 100.0]] })
+                }
+                "sketch.break" => {
+                    line(core, (aside, 100.0), (aside + 40.0, 100.0));
+                    serde_json::json!({ "points": [[aside + 20.0, 100.0]] })
+                }
+                // EVERY DRAWING TOOL: the places of its own the sample has always carried
+                _ => {
+                    let (a, b) = (aside + 5.0, aside + 15.0);
+                    serde_json::json!({ "points": [[a, 100.0], [b, 100.0], [b, 110.0]], "text": "a note" })
+                }
+            }
+        }
         let mut aside = 0.0;
         for entry in the_registry().iter().filter(|e| !e.takes.is_empty()) {
             let code = entry.command.code;
-            // each drawing stands aside of the ones before it, so nothing lands on what exists
-            aside += 30.0;
-            let (a, b, c) = (aside + 5.0, aside + 15.0, aside + 15.0);
+            // each fixture stands aside of the ones before it, so nothing lands on what exists
+            aside += 60.0;
             let answered = crate::checks::ask_the_core(&mut sketching, move |core| {
                 let the_run = by_code(code).expect("the code names an entry").run.expect("the entry is wired");
-                let mut given = serde_json::Map::new();
-                given.insert("points".into(), serde_json::json!([[a, 5.0], [b, 5.0], [c, 15.0]]));
-                given.insert("text".into(), serde_json::json!("a note"));
-                let answered = the_run(core, code, &serde_json::Value::Object(given));
+                let given = the_sample_for(core, code, aside);
+                let answered = the_run(core, code, &given);
                 let held: Vec<String> = Vec::new();
                 put_down_what_the_take_landed(core, &held);
                 answered
             })
             .expect("the run answered");
-            assert!(matches!(answered, Answered::Ran(_)), "{} drew nothing over the open sketch: {answered:?}", entry.command.code);
+            assert!(matches!(answered, Answered::Ran(_)), "{} worked nothing over the open sketch: {answered:?}", entry.command.code);
         }
     }
 
@@ -846,6 +1014,135 @@ mod tests {
         assert!(words.contains("sketch"), "the refusal did not say what was missing: {words}");
         let after = crate::checks::ask_the_core(&mut bare, |core| core.document()).expect("the document was read");
         assert_eq!(after, bare_as_it_stood, "a refused drawing changed the document");
+    }
+
+    /// THE DIMENSIONS AND THE CLICK OPERATIONS OF THE SKETCH, run as calls: a dimension measured by the
+    /// places the call names and held at the value it carries - the geometry itself moved to obey it, a
+    /// length pulled to its number, an angle turned to its own, a diameter held where it was set; a
+    /// segment trimmed back to the crossing it went past, a line extended to the wall it was pointed at,
+    /// a line broken in two where the call said. Each is checked by what the sheet holds after it, not
+    /// by the words the call answered; and each refusal - a trim that crosses nothing - is the program's
+    /// own words over a sheet that stands as it did.
+    #[test]
+    fn the_dimensions_and_click_operations_work_their_contracts() {
+        let _turn = crate::checks::take_your_turn();
+        /// AN OPEN, EMPTY SKETCH on the XY plane of a first part, the auto constraints off - what a check
+        /// of one tool sees is what that tool did.
+        fn an_empty_sketch() -> qymcad::LiveLoop {
+            let mut program = qymcad::LiveLoop::start();
+            crate::checks::ask_the_core(&mut program, |core| {
+                let new_part = core.word("start-new-part");
+                core.press_word(&new_part);
+                let xy = core.word("plane-xy-table");
+                core.press_word(&xy);
+                let auto = core.word("wb-auto-constraints");
+                let switch = core.widgets().into_iter().find(|w| w.label.ends_with(&auto)).expect("the switch of the auto constraints");
+                if switch.checked == Some(true) {
+                    core.click(switch.rect.center());
+                }
+            })
+            .expect("the fixture was built");
+            program
+        }
+        /// ONE DRAWING CALL, answered.
+        fn draw(program: &mut qymcad::LiveLoop, code: &str, points: &[[f64; 2]]) -> TheCall {
+            let code = code.to_string();
+            let points = points.to_vec();
+            crate::checks::ask_the_core(program, move |core| call(core, &code, &serde_json::json!({ "points": points }))).expect("the call answered")
+        }
+        /// THE OPEN SKETCH, read whole.
+        fn the_open(core: &mut qymcad::AgentSession) -> qymcad::SketchInfo {
+            let document = core.document();
+            document.sketches.iter().find(|s| Some(&s.name) == document.editing.as_ref()).expect("the open sketch").clone()
+        }
+        // A LINEAR DIMENSION PULLS ITS LINE TO THE VALUE: 40 measured, held at 30, the line 30 long
+        let mut program = an_empty_sketch();
+        draw(&mut program, "sketch.line", &[[0.0, 0.0], [40.0, 0.0]]);
+        let answered =
+            crate::checks::ask_the_core(&mut program, |core| call(core, "sketch.dim", &serde_json::json!({ "points": [[20.0, 0.0], [20.0, -8.0]], "value": "30" }))).expect("the call answered");
+        assert!(matches!(answered, TheCall::Answered { .. }), "the linear dimension did not run: {answered:?}");
+        let length = crate::checks::ask_the_core(&mut program, |core| match core.sketch_under(20.0, 0.0) {
+            Some(qymcad::SketchPick::Line { from, to }) => (to.0 - from.0).hypot(to.1 - from.1),
+            other => panic!("no line lies at (20, 0): {other:?}"),
+        })
+        .expect("the line was read");
+        assert!((length - 30.0).abs() < 1e-6, "the dimension held at 30 left the line {length} long");
+        // AN ANGULAR DIMENSION TURNS ITS LINES TO ITS VALUE: a free 63 deg held at 60, the lines 60 apart
+        draw(&mut program, "sketch.line", &[[100.0, 0.0], [130.0, 0.0]]);
+        draw(&mut program, "sketch.line", &[[100.0, 0.0], [110.0, 20.0]]);
+        let answered = crate::checks::ask_the_core(&mut program, |core| call(core, "sketch.dim-angle", &serde_json::json!({ "points": [[115.0, 0.0], [105.0, 10.0], [110.0, 5.0]], "value": "60" })))
+            .expect("the call answered");
+        assert!(matches!(answered, TheCall::Answered { .. }), "the angular dimension did not run: {answered:?}");
+        let angle = crate::checks::ask_the_core(&mut program, |core| {
+            // the two lines, each as its ray out of the vertex they share at (100, 0)
+            let mut ray = |at: (f64, f64)| match core.sketch_under(at.0, at.1) {
+                Some(qymcad::SketchPick::Line { from, to }) => {
+                    let (a, b) = ((from.0 - 100.0).hypot(from.1), (to.0 - 100.0).hypot(to.1));
+                    let (near, far) = if a < b { (from, to) } else { (to, from) };
+                    (far.0 - near.0, far.1 - near.1)
+                }
+                other => panic!("no line lies at {at:?}: {other:?}"),
+            };
+            let (ax, ay) = ray((115.0, 0.0));
+            let (bx, by) = ray((105.0, 10.0));
+            let cosine = (ax * bx + ay * by) / (ax.hypot(ay) * bx.hypot(by));
+            cosine.clamp(-1.0, 1.0).acos().to_degrees()
+        })
+        .expect("the lines were read");
+        assert!((angle - 60.0).abs() < 1e-6, "the dimension held at 60 left the lines at {angle}");
+        // A DIAMETER HELD AT ITS VALUE: a circle of 20 across held at 12, the radius 6
+        draw(&mut program, "sketch.circle", &[[200.0, 0.0], [210.0, 0.0]]);
+        let answered = crate::checks::ask_the_core(&mut program, |core| call(core, "sketch.dim-radius", &serde_json::json!({ "points": [[210.0, 0.0]], "value": "12" }))).expect("the call answered");
+        assert!(matches!(answered, TheCall::Answered { .. }), "the diameter did not run: {answered:?}");
+        let radius = crate::checks::ask_the_core(&mut program, |core| match core.sketch_under(206.0, 0.0) {
+            Some(qymcad::SketchPick::Circle { radius, .. }) => radius,
+            other => panic!("no circle lies at (206, 0): {other:?}"),
+        })
+        .expect("the circle was read");
+        assert!((radius - 6.0).abs() < 1e-6, "the diameter held at 12 left the radius at {radius}");
+        // A TRIM PULLS THE CLICKED ARM BACK TO ITS CROSSING
+        let mut program = an_empty_sketch();
+        draw(&mut program, "sketch.line", &[[0.0, 0.0], [40.0, 40.0]]);
+        draw(&mut program, "sketch.line", &[[0.0, 40.0], [40.0, 0.0]]);
+        let before = crate::checks::ask_the_core(&mut program, |core| the_open(core).places).expect("the places were read");
+        let answered = crate::checks::ask_the_core(&mut program, |core| call(core, "sketch.trim", &serde_json::json!({ "points": [[30.0, 10.0]] }))).expect("the call answered");
+        assert!(matches!(answered, TheCall::Answered { .. }), "the trim did not run: {answered:?}");
+        let after = crate::checks::ask_the_core(&mut program, |core| the_open(core).places).expect("the places were read");
+        assert!(
+            after.iter().any(|p| (p[0] - 20.0).abs() < 1e-6 && (p[1] - 20.0).abs() < 1e-6) && !before.iter().any(|p| (p[0] - 20.0).abs() < 1e-6 && (p[1] - 20.0).abs() < 1e-6),
+            "the arm trimmed did not come back to the crossing at (20, 20): {after:?}"
+        );
+        // A SEGMENT THAT CROSSES NOTHING IS TRIMMED WHOLE - the program's own rule: removed up to the
+        // intersections, and with none the whole segment is the piece
+        let mut bare = an_empty_sketch();
+        draw(&mut bare, "sketch.line", &[[0.0, 10.0], [40.0, 10.0]]);
+        let answered = crate::checks::ask_the_core(&mut bare, |core| call(core, "sketch.trim", &serde_json::json!({ "points": [[20.0, 10.0]] }))).expect("the call answered");
+        assert!(matches!(answered, TheCall::Answered { .. }), "the lone-line trim did not run: {answered:?}");
+        let lines = crate::checks::ask_the_core(&mut bare, |core| the_open(core).lines).expect("the lines were read");
+        assert_eq!(lines, 0, "a segment that crosses nothing was not trimmed whole");
+        // A CLICK THAT HITS NO SEGMENT is refused in the program's words, the sheet as it stood
+        let stood = crate::checks::ask_the_core(&mut bare, |core| core.document()).expect("the document was read");
+        let refused = crate::checks::ask_the_core(&mut bare, |core| call(core, "sketch.trim", &serde_json::json!({ "points": [[200.0, 200.0]] }))).expect("the call answered");
+        let TheCall::Refused(words) = &refused else { panic!("a trim over nothing at all was not refused: {refused:?}") };
+        assert!(!words.trim().is_empty(), "the refused trim said nothing");
+        let after = crate::checks::ask_the_core(&mut bare, |core| core.document()).expect("the document was read");
+        assert_eq!(after, stood, "a refused trim changed the document");
+        // AN EXTENSION REACHES THE WALL IT IS POINTED AT
+        let mut program = an_empty_sketch();
+        draw(&mut program, "sketch.line", &[[0.0, 0.0], [20.0, 0.0]]);
+        draw(&mut program, "sketch.line", &[[30.0, -10.0], [30.0, 10.0]]);
+        let answered = crate::checks::ask_the_core(&mut program, |core| call(core, "sketch.extend", &serde_json::json!({ "points": [[10.0, 0.0], [30.0, 0.0]] }))).expect("the call answered");
+        assert!(matches!(answered, TheCall::Answered { .. }), "the extend did not run: {answered:?}");
+        let reached = crate::checks::ask_the_core(&mut program, |core| the_open(core).places.iter().any(|p| (p[0] - 30.0).abs() < 1e-6 && p[1].abs() < 1e-6)).expect("the places were read");
+        assert!(reached, "the line did not reach the wall at (30, 0)");
+        // A BREAK SPLITS ITS LINE IN TWO
+        let mut program = an_empty_sketch();
+        draw(&mut program, "sketch.line", &[[0.0, 0.0], [40.0, 0.0]]);
+        let one = crate::checks::ask_the_core(&mut program, |core| the_open(core).lines).expect("the lines were read");
+        let answered = crate::checks::ask_the_core(&mut program, |core| call(core, "sketch.break", &serde_json::json!({ "points": [[20.0, 0.0]] }))).expect("the call answered");
+        assert!(matches!(answered, TheCall::Answered { .. }), "the break did not run: {answered:?}");
+        let two = crate::checks::ask_the_core(&mut program, |core| the_open(core).lines).expect("the lines were read");
+        assert_eq!(two, one + 1, "the break left {} lines where 1 stood", two - one);
     }
 
     /// THE PROBLEMS THAT STAND AFTER A CALL are carried in its answer, in the words the acceptance
