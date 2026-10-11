@@ -350,9 +350,14 @@ mod tests {
             assert!(refused.contains("no.such-thing") && refused.contains("search-tool"), "{name} did not name what was asked and suggest searching: {refused}");
             assert!(said["isError"].as_bool().unwrap_or(false), "the refusal must be an error the client sees: {said}");
         }
+        // A COMMAND OF THE CATALOGUE RUNS: the registry wires every command to a run - the take itself -
+        // so call-tool lands the command's bar in the person's window, exactly as a person's take does,
+        // and answers what the program then says; a command that cannot work on what stands says so in
+        // its own words rather than failing
         let said = call_a_tool(&mut program, port, &session, "call-tool", &serde_json::json!({ "name": "sketch.line", "parameters": {} }).to_string());
-        let refused = said["content"][0]["text"].as_str().expect("the refusal is said in words");
-        assert!(refused.contains("sketch.line") && refused.contains("command of the program"), "a known command was not said to be one: {refused}");
+        assert!(!said["isError"].as_bool().unwrap_or(true), "the take of a command of the catalogue answered as an error: {said}");
+        let taken = said["content"][0]["text"].as_str().expect("the take is said in words");
+        assert!(!taken.trim().is_empty(), "the take said nothing");
         wish(false, port, "the-token");
     }
 }

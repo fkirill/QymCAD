@@ -56,11 +56,35 @@ impl Entry {
 }
 
 /// THE REGISTRY, derived from the command catalogue: every command of the program, in the panel's order.
+/// Every entry is wired to a run - the take itself where no richer run is - so no command of the
+/// catalogue can stand outside the agent's reach; the guard below fails the day one does.
 pub(crate) fn the_registry() -> &'static [Entry] {
     static THE_REGISTRY: std::sync::OnceLock<Vec<Entry>> = std::sync::OnceLock::new();
     THE_REGISTRY.get_or_init(|| {
-        qymcad::COMMANDS.iter().map(|command| Entry { command, synonyms: SYNONYMS.iter().find(|(code, _)| *code == command.code).map(|(_, words)| *words).unwrap_or(&[]), run: None }).collect()
+        qymcad::COMMANDS
+            .iter()
+            .map(|command| Entry {
+                command,
+                synonyms: SYNONYMS.iter().find(|(code, _)| *code == command.code).map(|(_, words)| *words).unwrap_or(&[]),
+                run: RICHER_RUNS.iter().find(|(code, _)| *code == command.code).map(|(_, run)| *run).or(Some(the_take)),
+            })
+            .collect()
     })
+}
+
+/// THE RUNS OF RICHER SHAPE, by command code: a run that works the command through its picks and values,
+/// over the take every command already has. None is wired yet - the executors arrive with their own
+/// tasks, and the take serves every entry meanwhile.
+const RICHER_RUNS: &[(&str, Run)] = &[];
+
+/// THE TAKE ITSELF, the run every command has: the command is taken into the hand through the command
+/// search, exactly as a person takes it, and what the program then says is the answer. The command's bar
+/// of options stands in the window for the caller to work with - Enter applies it, Esc puts it down, as
+/// the person's keys do.
+fn the_take(core: &mut qymcad::AgentSession, code: &str, _parameters: &serde_json::Value) -> String {
+    let Some(entry) = by_code(code) else { return format!("{code}: no operation of the program is named so") };
+    take_the_command(core, entry.command);
+    core.status()
 }
 
 /// THE ENTRY OF A CODE, as `call-tool` names an operation.
@@ -300,5 +324,40 @@ mod tests {
         );
         assert!(hits.iter().any(|e| e.command.code == "sketch.line"), "the line was not found at all");
         assert!(the_hits("qqqqzzzz", None, "part").is_empty(), "a miss found something");
+    }
+
+    /// THE GUARD HOLDS THE LINK BOTH WAYS: every command of the catalogue is discoverable through the
+    /// search's matching - by its code, by its name in each language, by each of its synonyms - and every
+    /// entry of the registry executes: its run is wired, and the run of each entry runs over a live
+    /// program, command by command, each answered in words. An entry left unwired fails the guard where
+    /// it stands; the guard was red before a run was wired to every entry, and stays green only while the
+    /// wiring does.
+    #[test]
+    fn the_guard_holds_the_link_between_the_catalogue_and_the_registry() {
+        for entry in the_registry() {
+            let mut needles = vec![entry.command.code.to_string()];
+            needles.extend(entry.names().into_values());
+            needles.extend(entry.synonyms.iter().map(|s| s.to_string()));
+            for needle in needles {
+                assert!(the_hits(&needle, None, "part").iter().any(|e| e.command.code == entry.command.code), "{} is not found by {needle:?}", entry.command.code);
+            }
+            assert!(entry.run.is_some(), "{} is wired to no run", entry.command.code);
+        }
+        let _turn = crate::checks::take_your_turn();
+        let mut program = qymcad::LiveLoop::start();
+        for entry in the_registry() {
+            let code = entry.command.code;
+            let said = crate::checks::ask_the_core(&mut program, move |core| {
+                let the_run = by_code(code).expect("the code names an entry").run.expect("the entry is wired");
+                let said = the_run(core, code, &serde_json::json!({}));
+                // the take leaves the command in the hand, as a person's take does; the check puts it
+                // down, so the next take starts from bars as they stood
+                let held: Vec<String> = Vec::new();
+                put_down_what_the_take_landed(core, &held);
+                said
+            })
+            .expect("the run answered");
+            assert!(!said.is_empty(), "{} said nothing when it ran", entry.command.code);
+        }
     }
 }
