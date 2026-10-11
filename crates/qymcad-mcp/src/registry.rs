@@ -1447,6 +1447,263 @@ mod tests {
         assert_eq!(driven, (1, 2), "the projected edge did not land as a line of two driven points: {driven:?}");
     }
 
+    /// THE TWELVE CONSTRAINTS OF A SKETCH, tied through the person's vocabulary over the agent's own
+    /// session - the same words and clicks a person makes, the ones the escape hatch will carry: the
+    /// geometry drawn, the pair picked (a click, Shift for the second), the button of the constraint
+    /// pressed by its hint. Every constraint lands in the sketch as its own kind, takes the degrees of
+    /// freedom it owes, and the program says its own word for what was added; a pair that cannot take
+    /// a constraint is told so and nothing is tied.
+    #[test]
+    fn the_twelve_constraints_tie_what_the_person_s_vocabulary_picks() {
+        let _turn = crate::checks::take_your_turn();
+        /// AN OPEN, EMPTY SKETCH with the auto constraints off, over the agent's own loop - what a check
+        /// of one constraint sees is what that constraint tied and nothing the program added while
+        /// drawing.
+        fn an_empty_sketch() -> qymcad::LiveLoop {
+            let mut program = qymcad::LiveLoop::start();
+            crate::checks::ask_the_core(&mut program, |core| {
+                let new_part = core.word("start-new-part");
+                core.press_word(&new_part);
+                let xy = core.word("plane-xy-table");
+                core.press_word(&xy);
+                let auto = core.word("wb-auto-constraints");
+                let switch = core.widgets().into_iter().find(|w| w.label.ends_with(&auto)).expect("the switch of the auto constraints");
+                if switch.checked == Some(true) {
+                    core.click(switch.rect.center());
+                }
+            })
+            .expect("the fixture was built");
+            program
+        }
+        /// DRAW with the tool of the hint, clicking the places in turn, the tool put down and the
+        /// arrow taken back - what the next pick clicks with.
+        fn draw(core: &mut qymcad::AgentSession, hint: &str, places: &[(f64, f64)]) {
+            let word = core.word(hint);
+            core.press_hint(&word);
+            for (x, y) in places {
+                core.click_on_sketch(*x, *y);
+            }
+            core.key(qymcad::Key::Escape);
+            take_the_arrow(core);
+        }
+        /// PICK what lies at the place, adding to the set when `shift`.
+        fn pick(core: &mut qymcad::AgentSession, x: f64, y: f64, shift: bool) {
+            if shift {
+                let at = core.on_sketch(x, y);
+                core.click_with(at, qymcad::PointerButton::Primary, qymcad::Modifiers::SHIFT);
+            } else {
+                core.click_on_sketch(x, y);
+            }
+        }
+        /// THE PAIR EACH CONSTRAINT IS TIED ON, drawn and picked: `(hint, kind, degrees of freedom it takes)`.
+        fn the_pair_of(core: &mut qymcad::AgentSession, hint: &str) -> (&'static str, i32) {
+            match hint {
+                "con-coincident-hint" => {
+                    draw(core, "tb-line-hint", &[(0.0, 0.0), (20.0, 0.0)]);
+                    draw(core, "tb-line-hint", &[(30.0, 10.0), (50.0, 10.0)]);
+                    pick(core, 20.0, 0.0, false);
+                    pick(core, 30.0, 10.0, true);
+                    ("Coincident", 2)
+                }
+                "con-horizontal-hint" => {
+                    draw(core, "tb-line-hint", &[(0.0, 0.0), (20.0, 20.0)]);
+                    pick(core, 10.0, 10.0, false);
+                    ("Horizontal", 1)
+                }
+                "con-vertical-hint" => {
+                    draw(core, "tb-line-hint", &[(0.0, 0.0), (20.0, 20.0)]);
+                    pick(core, 10.0, 10.0, false);
+                    ("Vertical", 1)
+                }
+                "con-parallel-hint" => {
+                    draw(core, "tb-line-hint", &[(0.0, 0.0), (20.0, 0.0)]);
+                    draw(core, "tb-line-hint", &[(0.0, 10.0), (20.0, 30.0)]);
+                    pick(core, 10.0, 0.0, false);
+                    pick(core, 10.0, 20.0, true);
+                    ("Parallel", 1)
+                }
+                "con-perpendicular-hint" => {
+                    draw(core, "tb-line-hint", &[(0.0, 0.0), (20.0, 0.0)]);
+                    draw(core, "tb-line-hint", &[(0.0, 10.0), (20.0, 30.0)]);
+                    pick(core, 10.0, 0.0, false);
+                    pick(core, 10.0, 20.0, true);
+                    ("Perpendicular", 1)
+                }
+                "con-equal" => {
+                    draw(core, "tb-line-hint", &[(0.0, 0.0), (20.0, 0.0)]);
+                    draw(core, "tb-line-hint", &[(0.0, 10.0), (50.0, 10.0)]);
+                    pick(core, 10.0, 0.0, false);
+                    pick(core, 25.0, 10.0, true);
+                    ("Equal", 1)
+                }
+                "con-fix" => {
+                    draw(core, "tb-line-hint", &[(0.0, 0.0), (20.0, 0.0)]);
+                    pick(core, 20.0, 0.0, false);
+                    ("Fixed", 2)
+                }
+                "con-collinear-hint" => {
+                    draw(core, "tb-line-hint", &[(0.0, 0.0), (20.0, 0.0)]);
+                    draw(core, "tb-line-hint", &[(30.0, 10.0), (50.0, 10.0)]);
+                    // the first line held by both ends, so the second is what has to come onto it
+                    pick(core, 0.0, 0.0, false);
+                    pick(core, 20.0, 0.0, true);
+                    let fix = core.word("con-fix");
+                    core.press_hint(&fix);
+                    pick(core, 10.0, 0.0, false);
+                    pick(core, 40.0, 10.0, true);
+                    ("Collinear", 2)
+                }
+                "con-concentric-hint" => {
+                    draw(core, "tb-circle-hint", &[(0.0, 0.0), (5.0, 0.0)]);
+                    draw(core, "tb-circle-hint", &[(30.0, 0.0), (38.0, 0.0)]);
+                    pick(core, 5.0, 0.0, false);
+                    pick(core, 38.0, 0.0, true);
+                    ("Concentric", 2)
+                }
+                "con-tangent-hint" => {
+                    draw(core, "tb-circle-hint", &[(0.0, 0.0), (10.0, 0.0)]);
+                    draw(core, "tb-line-hint", &[(20.0, -5.0), (20.0, 5.0)]);
+                    pick(core, 10.0, 0.0, false);
+                    pick(core, 20.0, 0.0, true);
+                    ("Tangent", 1)
+                }
+                "con-symmetric-hint" => {
+                    draw(core, "tb-point-hint", &[(5.0, 10.0)]);
+                    draw(core, "tb-point-hint", &[(-25.0, -30.0)]);
+                    pick(core, 5.0, 10.0, false);
+                    pick(core, -25.0, -30.0, true);
+                    pick(core, 0.0, 20.0, true); // the Y axis of the sheet
+                    ("Symmetric", 2)
+                }
+                _ => {
+                    draw(core, "tb-line-hint", &[(0.0, 0.0), (20.0, 0.0)]);
+                    draw(core, "tb-point-hint", &[(10.0, 15.0)]);
+                    // the line held by both ends, so the point is what has to move
+                    pick(core, 0.0, 0.0, false);
+                    pick(core, 20.0, 0.0, true);
+                    let fix = core.word("con-fix");
+                    core.press_hint(&fix);
+                    pick(core, 10.0, 15.0, false);
+                    pick(core, 10.0, 0.0, true);
+                    ("Midpoint", 2)
+                }
+            }
+        }
+        for hint in [
+            "con-coincident-hint",
+            "con-horizontal-hint",
+            "con-vertical-hint",
+            "con-parallel-hint",
+            "con-perpendicular-hint",
+            "con-equal",
+            "con-fix",
+            "con-collinear-hint",
+            "con-concentric-hint",
+            "con-tangent-hint",
+            "con-symmetric-hint",
+            "con-midpoint-hint",
+        ] {
+            let mut program = an_empty_sketch();
+            let answered = crate::checks::ask_the_core(&mut program, |core| {
+                let (kind, takes) = the_pair_of(core, hint);
+                let dof = the_open_sketch(core).map(|s| s.dof).unwrap_or(0);
+                let button = core.word(hint);
+                core.press_hint(&button);
+                (kind, takes, dof, core.status())
+            })
+            .expect("the pair was drawn");
+            let (kind, takes, dof, said) = answered;
+            let after = crate::checks::ask_the_core(&mut program, |core| {
+                let open = the_open_sketch(core).expect("the sketch stands open");
+                (open.constraint_kinds.clone(), open.dof, core.word("sk-constraint-added"))
+            })
+            .expect("the sketch was read");
+            assert!(after.0.iter().any(|k| k == kind), "{hint}: the sketch holds no {kind}: {:?}", after.0);
+            assert_eq!(after.1, dof - takes, "{hint}: the {kind} had to take {takes} of {dof}, and {} are left", after.1);
+            assert_eq!(said, after.2, "{hint}: the program said {said:?} instead of its word for what was added");
+        }
+    }
+
+    /// MOVING, COPYING AND ROTATING through the person's vocabulary over the agent's own session - the
+    /// three clicks of the move tools (what, the base point, the target) and the popup the rotation
+    /// types its angle into - the same gestures the escape hatch will carry, checked by where the
+    /// geometry stands after each.
+    #[test]
+    fn moving_copying_and_rotating_go_through_the_person_s_vocabulary() {
+        let _turn = crate::checks::take_your_turn();
+        let mut program = qymcad::LiveLoop::start();
+        crate::checks::ask_the_core(&mut program, |core| {
+            let new_part = core.word("start-new-part");
+            core.press_word(&new_part);
+            let xy = core.word("plane-xy-table");
+            core.press_word(&xy);
+            // the auto constraints off: a line they have laid Horizontal cannot be turned by a
+            // rotation - the solver holds it and says so
+            let auto = core.word("wb-auto-constraints");
+            let switch = core.widgets().into_iter().find(|w| w.label.ends_with(&auto)).expect("the switch of the auto constraints");
+            if switch.checked == Some(true) {
+                core.click(switch.rect.center());
+            }
+        })
+        .expect("the fixture was built");
+        /// THE LINE UNDER A PLACE OF THE SHEET, as its two ends.
+        fn the_line(core: &mut qymcad::AgentSession, at: (f64, f64)) -> ((f64, f64), (f64, f64)) {
+            match core.sketch_under(at.0, at.1) {
+                Some(qymcad::SketchPick::Line { from, to }) => (from, to),
+                other => panic!("no line lies at {at:?}: {other:?}"),
+            }
+        }
+        /// A LINE OF 20 from `at`, drawn with the line tool and left put down.
+        fn draw_a_line(core: &mut qymcad::AgentSession, at: (f64, f64)) {
+            let word = core.word("tb-line-hint");
+            core.press_hint(&word);
+            core.click_on_sketch(at.0, at.1);
+            core.click_on_sketch(at.0 + 20.0, at.1);
+            core.key(qymcad::Key::Escape);
+        }
+        // A MOVE: the tool, the line clicked, the base point, the target - the line stands 30 further on
+        let moved = crate::checks::ask_the_core(&mut program, |core| {
+            draw_a_line(core, (0.0, 0.0));
+            let word = core.word("tb-move-hint");
+            core.press_hint(&word);
+            core.click_on_sketch(10.0, 0.0);
+            core.click_on_sketch(0.0, 0.0);
+            core.click_on_sketch(30.0, 0.0);
+            the_line(core, (40.0, 0.0))
+        })
+        .expect("the move ran");
+        assert!((moved.0 .0 - 30.0).abs() < 1e-6 && (moved.1 .0 - 50.0).abs() < 1e-6, "the moved line stands at {moved:?}, not 30 further on");
+        // A COPY: the line picked where the click grips it, the target clicked where the copy goes - a
+        // second line stands twenty above the first
+        let copied = crate::checks::ask_the_core(&mut program, |core| {
+            let word = core.word("tb-copy-hint");
+            core.press_hint(&word);
+            core.click_on_sketch(35.0, 0.0);
+            core.click_on_sketch(35.0, 20.0);
+            let open = the_open_sketch(core).expect("the sketch stands open");
+            (open.lines, open.places.iter().any(|p| (p[0] - 30.0).abs() < 1e-6 && (p[1] - 20.0).abs() < 1e-6))
+        })
+        .expect("the copy ran");
+        assert!(copied.0 >= 2 && copied.1, "the copy left {} lines and no point at (30, 20): {:?}", copied.0, copied.1);
+        // A ROTATION: the line clicked, the centre, the angle typed into the popup - the line stands
+        // 30 deg from where it did
+        let turned = crate::checks::ask_the_core(&mut program, |core| {
+            draw_a_line(core, (100.0, 0.0));
+            let word = core.word("tb-rotate-hint");
+            core.press_hint(&word);
+            core.click_on_sketch(110.0, 0.0);
+            core.click_on_sketch(100.0, 0.0);
+            core.settle(); // the popup's field takes the focus a frame after the centre is set
+            core.type_text("30");
+            core.key(qymcad::Key::Enter);
+            // the middle of the turned line: 10 out along 30 deg from its held end at (100, 0)
+            the_line(core, (100.0 + 10.0 * 30f64.to_radians().cos(), 10.0 * 30f64.to_radians().sin()))
+        })
+        .expect("the rotation ran");
+        let angle = (turned.1 .1 - turned.0 .1).atan2(turned.1 .0 - turned.0 .0).to_degrees();
+        assert!((angle - 30.0).abs() < 1e-6, "the rotated line stands at {angle} deg, not 30");
+    }
+
     /// THE PROBLEMS THAT STAND AFTER A CALL are carried in its answer, in the words the acceptance
     /// checks use: nothing waiting for a click with no bar saying so, no bar standing with nothing in
     /// hand behind it, no key of the catalogue on screen instead of words, no letter the font cannot
