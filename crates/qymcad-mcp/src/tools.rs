@@ -5,8 +5,9 @@
 //! The tools that touch the program answer only from rest: their work is handed to the queue and taken
 //! into the frames of the program - over the driving core, a real agent session - and what they answer
 //! comes back from the frame thread, once the program has come to rest. The tools that read the program's
-//! own sources - the command catalogue, the help articles - answer from them: they change nothing and wait
-//! for nothing.
+//! own sources - the command catalogue, the help articles - answer from them: they change nothing. The
+//! search is of both kinds: it reads the sources for what there is to find, and asks the program one
+//! thing - where it stands - because its own rule ranks the standing workbench first.
 use std::time::Duration;
 
 use rmcp::handler::server::wrapper::Parameters;
@@ -170,24 +171,27 @@ impl TheAgent {
         })
     }
 
-    /// FIND AN OPERATION by any of its names: its code, or its name in any language the program speaks.
-    /// The answer carries each operation's code, its names, and the workbench it lives in; a miss is empty
-    /// and says so in words, not in an error.
+    /// FIND AN OPERATION by any of its names: its code, its name in any language the program speaks, the
+    /// title of its help article, or a word it is also known by. The workbench the program stands in ranks
+    /// first, as the person's own search ranks it - so the program is asked where it stands, and the
+    /// answer comes from rest. The answer carries each operation's code, its names, a one-line synopsis
+    /// and the workbench it lives in; a miss is empty and says so in words, not in an error.
     #[tool(
         name = "search-tool",
-        description = "Find operations of the program by a word of their code or of their name in any language the program speaks; the answer carries each operation's code, its names, and the workbench it lives in"
+        description = "Find operations of the program by a word of their code, of their name in any language the program speaks, of the title of their help article, or of a word they are also known by; the answer carries each operation's code, its names, a one-line synopsis and the workbench it lives in"
     )]
-    fn search_tool(&self, Parameters(SearchToolParams { query, workbench }): Parameters<SearchToolParams>) -> Result<CallToolResult, rmcp::ErrorData> {
-        let needle = query.to_lowercase();
-        let found: Vec<serde_json::Value> = crate::registry::the_registry()
-            .iter()
-            .filter(|e| workbench.as_deref().is_none_or(|w| w == e.command.workbench))
-            .filter(|e| e.command.code.to_lowercase().contains(&needle) || e.names().values().any(|n| n.to_lowercase().contains(&needle)))
-            .map(|e| serde_json::json!({ "code": e.command.code, "names": e.names(), "workbench": e.command.workbench }))
+    async fn search_tool(&self, Parameters(SearchToolParams { query, workbench }): Parameters<SearchToolParams>) -> Result<CallToolResult, rmcp::ErrorData> {
+        let now_in = match the_program_answers(|core| core.workbench()).await {
+            Ok(now_in) => now_in,
+            Err(said) => return Ok(CallToolResult::error(vec![ContentBlock::text(said)])),
+        };
+        let found: Vec<serde_json::Value> = crate::registry::the_hits(&query, workbench.as_deref(), &now_in)
+            .into_iter()
+            .map(|e| serde_json::json!({ "code": e.command.code, "names": e.names(), "synopsis": e.synopsis(), "workbench": e.command.workbench }))
             .collect();
         if found.is_empty() {
             return Ok(CallToolResult::success(vec![ContentBlock::text(format!(
-                "no operation of the program matches {query}; search-tool finds by code or by name, in any language the program speaks"
+                "no operation of the program matches {query}; search-tool finds by code, by name in any language the program speaks, by the title of the help article, or by a word the operation is also known by"
             ))]));
         }
         Ok(CallToolResult::success(vec![ContentBlock::json(found).expect("the found operations are plain data and serialize")]))

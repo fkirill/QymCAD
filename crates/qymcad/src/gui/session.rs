@@ -1387,6 +1387,13 @@ impl AgentSession<'_> {
         self.app.status.chars().filter(|c| !('\u{e000}'..='\u{f8ff}').contains(c)).collect::<String>().trim().to_string()
     }
 
+    /// THE WORKBENCH THE PROGRAM STANDS IN, by its code (`sketch`, `part`, `assembly`): the one the
+    /// command search ranks first, and the agent's search with it.
+    pub fn workbench(&mut self) -> String {
+        self.settle();
+        self.app.workbench.code().to_string()
+    }
+
     pub fn windows(&mut self) -> Vec<String> {
         self.settle();
         self.win.widgets.iter().filter(|w| w.kind == Kind::Window).map(|w| w.label.clone()).collect()

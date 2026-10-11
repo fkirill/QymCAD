@@ -15,11 +15,18 @@
 /// outcome in words.
 pub(crate) type Run = fn(&mut qymcad::AgentSession, &str, &serde_json::Value) -> String;
 
+/// THE SYNONYMS OF THE REGISTRY'S OWN, by command code: words a client looks for an operation by that
+/// neither its code nor its names in any language carry (`fillet` by `round`). The registry is derived;
+/// this is the one supplement it takes, and every word here must name its command's code.
+const SYNONYMS: &[(&str, &[&str])] = &[("part.fillet", &["round", "rounding"]), ("part.chamfer", &["bevel"]), ("part.shell", &["hollow"]), ("part.hole", &["drill", "bore"])];
+
 /// ONE OPERATION OF THE PROGRAM, as the agent calls it by name.
 pub(crate) struct Entry {
     /// THE CATALOGUE ROW the entry is derived from: the code, the workbench, the launch - the one source
     /// the command search and the panel read.
     pub(crate) command: &'static qymcad::Command,
+    /// The words the operation is also found by.
+    pub(crate) synonyms: &'static [&'static str],
     /// ITS RUN over the agent's session; `None` where none is wired yet, and a call of the entry answers
     /// that no operation is served for its command.
     pub(crate) run: Option<Run>,
@@ -31,17 +38,78 @@ impl Entry {
     pub(crate) fn names(&self) -> std::collections::BTreeMap<String, String> {
         qymcad_help::languages().into_iter().map(|l| (l.clone(), self.command.name_in(&l))).collect()
     }
+
+    /// THE ONE-LINE SYNOPSIS: the caption of the first picture of the help article, which says in one
+    /// sentence what the operation is; the command's own name where the article carries no such picture.
+    pub(crate) fn synopsis(&self) -> String {
+        let caption = self.command.help_article().and_then(qymcad_help::article).and_then(|md| {
+            qymcad_help::parse(md).into_iter().find_map(|b| match b {
+                qymcad_help::Block::Image { alt, .. } => Some(alt),
+                _ => None,
+            })
+        });
+        match caption {
+            Some(alt) if !alt.is_empty() => alt.iter().map(|s| s.text.as_str()).collect(),
+            _ => self.command.name(),
+        }
+    }
 }
 
 /// THE REGISTRY, derived from the command catalogue: every command of the program, in the panel's order.
 pub(crate) fn the_registry() -> &'static [Entry] {
     static THE_REGISTRY: std::sync::OnceLock<Vec<Entry>> = std::sync::OnceLock::new();
-    THE_REGISTRY.get_or_init(|| qymcad::COMMANDS.iter().map(|command| Entry { command, run: None }).collect())
+    THE_REGISTRY.get_or_init(|| {
+        qymcad::COMMANDS.iter().map(|command| Entry { command, synonyms: SYNONYMS.iter().find(|(code, _)| *code == command.code).map(|(_, words)| *words).unwrap_or(&[]), run: None }).collect()
+    })
 }
 
 /// THE ENTRY OF A CODE, as `call-tool` names an operation.
 pub(crate) fn by_code(code: &str) -> Option<&'static Entry> {
     the_registry().iter().find(|e| e.command.code == code)
+}
+
+/// THE HITS OF A SEARCH, by the command search's own rules: an operation is found by its code, by its
+/// name in any language the program speaks, by the title of its help article in any of them, or by a
+/// word it is also known by; a match at the start of a word ranks above one inside it; the workbench the
+/// program stands in (`now_in`) comes first, the rest behind it; a workbench named in the call (`only`)
+/// keeps every other out. The whole set is answered - a client reads what a person would have to squint
+/// at.
+pub(crate) fn the_hits(query: &str, only: Option<&str>, now_in: &str) -> Vec<&'static Entry> {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return Vec::new();
+    }
+    let mut mine: Vec<(usize, &Entry)> = Vec::new();
+    let mut rest: Vec<(usize, &Entry)> = Vec::new();
+    for entry in the_registry() {
+        if let Some(want) = only {
+            if entry.command.workbench != want {
+                continue;
+            }
+        }
+        let Some(rank) = the_words_it_is_found_by(entry).iter().filter_map(|w| w.to_lowercase().find(&q)).min() else { continue };
+        if entry.command.workbench == now_in {
+            mine.push((rank, entry));
+        } else {
+            rest.push((rank, entry));
+        }
+    }
+    let by_rank_then_code = |a: &(usize, &Entry), b: &(usize, &Entry)| (a.0, a.1.command.code).cmp(&(b.0, b.1.command.code));
+    mine.sort_by(by_rank_then_code);
+    rest.sort_by(by_rank_then_code);
+    mine.into_iter().chain(rest).map(|(_, e)| e).collect()
+}
+
+/// THE WORDS AN OPERATION IS FOUND BY: its code, its names in each language, the title of its help
+/// article in each of them, and the words it is also known by.
+fn the_words_it_is_found_by(entry: &Entry) -> Vec<String> {
+    let mut words = vec![entry.command.code.to_string()];
+    words.extend(entry.names().into_values());
+    if let Some(article) = entry.command.help_article() {
+        words.extend(qymcad_help::languages().into_iter().filter_map(|l| qymcad_help::title_in(&l, article)));
+    }
+    words.extend(entry.synonyms.iter().map(|s| s.to_string()));
+    words
 }
 
 /// ONE PARAMETER OF AN OPERATION: a field its bar puts up when the command is taken.
@@ -199,5 +267,38 @@ mod tests {
             }
         }
         assert!(bars_opened >= 8, "only {bars_opened} feature commands put a bar up on the fixture; the reads have gone blind");
+    }
+
+    /// SEARCH FINDS AN OPERATION BY ANY OF ITS NAMES: its code, its name in each language the program
+    /// speaks, the title of its help article, the words it is also known by. A workbench named in the
+    /// call keeps every other workbench out. The workbench the program stands in comes first, as the
+    /// person's own search ranks it - a command of the standing workbench that matches deep inside its
+    /// code stands above one of another workbench that matches at the start of its name. A miss finds
+    /// nothing.
+    #[test]
+    fn search_finds_an_operation_by_any_of_its_names() {
+        let finds = |needle: &str, code: &str| the_hits(needle, None, "part").iter().any(|e| e.command.code == code);
+        let line = by_code("sketch.line").expect("the line is in the registry");
+        assert!(finds("sketch.line", "sketch.line"), "a command's own code found it not");
+        for (language, name) in line.names() {
+            assert!(finds(&name, "sketch.line"), "the {language} name {name:?} found the line not");
+        }
+        let the_box = by_code("part.box").expect("the box is in the registry");
+        let article = the_box.command.help_article().expect("the box points at an article");
+        for language in qymcad_help::languages() {
+            let Some(title) = qymcad_help::title_in(&language, article) else { continue };
+            assert!(finds(&title, "part.box"), "the article title {title:?} of {language} found the box not");
+        }
+        assert!(finds("round", "part.fillet"), "the word the fillet is also known by found it not");
+        assert!(the_hits("fillet", Some("sketch"), "part").iter().all(|e| e.command.workbench == "sketch"), "the workbench filter let another workbench through");
+        let hits = the_hits("line", None, "part");
+        assert_eq!(
+            hits.first().map(|e| e.command.workbench),
+            Some("part"),
+            "a command of the standing workbench did not come first: {:?}",
+            the_hits("line", None, "part").iter().map(|e| e.command.code).collect::<Vec<_>>()
+        );
+        assert!(hits.iter().any(|e| e.command.code == "sketch.line"), "the line was not found at all");
+        assert!(the_hits("qqqqzzzz", None, "part").is_empty(), "a miss found something");
     }
 }
