@@ -223,6 +223,12 @@ const RICHER_RUNS: &[Wired] = &[
     Wired { code: "sketch.delete", run: delete_the_selection, takes: &[Take { name: "points", kind: "points" }] },
     Wired { code: "sketch.mirror", run: reflect_the_selection, takes: &[Take { name: "points", kind: "points" }] },
     Wired { code: "sketch.offset", run: lay_an_offset, takes: &[Take { name: "points", kind: "points" }, Take { name: "distance", kind: "text" }] },
+    Wired { code: "part.box", run: make_a_primitive, takes: &[] },
+    Wired { code: "part.cylinder", run: make_a_primitive, takes: &[] },
+    Wired { code: "part.sphere", run: make_a_primitive, takes: &[] },
+    Wired { code: "part.cone", run: make_a_primitive, takes: &[] },
+    Wired { code: "part.torus", run: make_a_primitive, takes: &[] },
+    Wired { code: "part.prism", run: make_a_primitive, takes: &[] },
 ];
 
 /// DRAW A CHAIN OF LINES: the tool taken, every place of the sheet clicked in turn, the chain ended as a
@@ -575,6 +581,38 @@ fn lay_an_offset(core: &mut qymcad::AgentSession, code: &str, given: &serde_json
     }
 }
 
+/// MAKE A PRIMITIVE of the code's own shape - a box, a cylinder, a sphere, a cone, a torus, a prism:
+/// the command taken, the sizes the call carried filled into the fields that stand at the geometry,
+/// Enter. The placement a person clicks is the origin by the tool's own default; the body of the
+/// primitive is in the part after it, its node built without error. A size the tool will not take - no
+/// radius, a length below nothing - is refused in the program's own words and no body comes to be.
+fn make_a_primitive(core: &mut qymcad::AgentSession, code: &str, given: &serde_json::Value) -> Answered {
+    let Some(entry) = by_code(code) else { return Answered::Refused(format!("{code}: no operation of the program is named so")) };
+    let kind = match code {
+        "part.cylinder" => "Cylinder",
+        "part.sphere" => "Sphere",
+        "part.cone" => "Cone",
+        "part.torus" => "Torus",
+        "part.prism" => "Prism",
+        _ => "Box3",
+    };
+    let before = core.document();
+    let bodies_before = before.bodies.len();
+    let nodes_before = before.features.iter().filter(|f| f.kind == kind).count();
+    take_the_command(core, entry.command);
+    fill_the_fields(core, given);
+    core.key(qymcad::Key::Enter);
+    let document = core.document();
+    let made = document.features.iter().filter(|f| f.kind == kind && !f.suppressed).rfind(|f| f.error.is_none());
+    match (document.bodies.len() > bodies_before || document.features.iter().filter(|f| f.kind == kind).count() > nodes_before, made) {
+        (true, Some(node)) if !document.bodies.is_empty() && document.bodies.iter().any(|b| b.volume > 0.0) => {
+            Answered::Ran(format!("a {} made ({}), its body in the part", entry.command.name(), node.name))
+        }
+        (_, Some(node)) => Answered::Refused(format!("the {} would not build: {}", entry.command.name(), node.error.clone().unwrap_or_default())),
+        _ => Answered::Refused(format!("nothing was made: {}", core.status())),
+    }
+}
+
 /// THE ARROW OF THE PANEL, put up as a person puts it before picking - whatever was in hand down, the
 /// select tool up.
 fn take_the_arrow(core: &mut qymcad::AgentSession) {
@@ -734,13 +772,39 @@ pub(crate) fn take_the_command(core: &mut qymcad::AgentSession, command: &qymcad
 }
 
 /// THE INPUT FIELDS ON SCREEN, in reading order: what a person can type into, each read as a parameter -
-/// its caption or grey words, its kind, and what it holds.
+/// its caption or grey words, its kind, and what it holds. A field with no caption of its own is read
+/// by the words painted beside it on the canvas (the sizes of a primitive stand at the geometry, their
+/// captions drawn beside them and not in the field) - the same pairing a fill makes.
 fn the_fields_on_screen(core: &mut qymcad::AgentSession) -> Vec<Parameter> {
+    let painted = core.painted();
     core.widgets()
         .into_iter()
         .filter(|w| matches!(w.kind, qymcad::Kind::TextField | qymcad::Kind::Number | qymcad::Kind::ComboBox | qymcad::Kind::Slider))
-        .map(|w| Parameter { name: the_words_it_reads_by(&w), kind: the_kind_word(w.kind).to_string(), says: w.value })
+        .map(|w| {
+            // the words painted beside it name it first: a field at the geometry carries only the grey
+            // words of any number, its caption drawn beside it
+            let painted_beside = the_caption_painted_beside(&painted, &w);
+            let name = if painted_beside.is_empty() { the_words_it_reads_by(&w) } else { painted_beside };
+            Parameter { name, kind: the_kind_word(w.kind).to_string(), says: w.value }
+        })
         .collect()
+}
+
+/// THE WORDS PAINTED BESIDE A FIELD: the caption nearest it on the same row after it or below it - how
+/// the canvas labels the fields that stand at the geometry.
+fn the_caption_painted_beside(painted: &[(qymcad::Rect, String)], w: &qymcad::Widget) -> String {
+    painted
+        .iter()
+        .filter(|(r, text)| {
+            !text.trim().is_empty()
+                && ((r.min.y < w.rect.max.y && r.max.y > w.rect.min.y && r.max.x <= w.rect.min.x + 1.0) || (r.max.y <= w.rect.min.y + 1.0 && r.min.x < w.rect.max.x && r.min.x >= w.rect.min.x - 40.0))
+        })
+        .min_by(|a, b| {
+            let d = |r: &qymcad::Rect| if r.max.y < w.rect.min.y { 1000.0 + w.rect.min.y - r.max.y } else { w.rect.min.x - r.max.x };
+            d(&a.0).total_cmp(&d(&b.0))
+        })
+        .map(|(_, text)| text.trim().to_string())
+        .unwrap_or_default()
 }
 
 /// THE WORDS A FIELD READS BY: its caption, or the grey words it shows while empty.
@@ -843,10 +907,15 @@ mod tests {
         /// THE SCREEN'S OWN ANSWER, written beside the registry's read: what stands on screen one may
         /// type into, as (name, what it holds) pairs - the diff against before is the check's own.
         fn the_screen(core: &mut qymcad::AgentSession) -> Vec<(String, String)> {
+            let painted = core.painted();
             core.widgets()
                 .into_iter()
                 .filter(|w| matches!(w.kind, qymcad::Kind::TextField | qymcad::Kind::Number | qymcad::Kind::ComboBox | qymcad::Kind::Slider))
-                .map(|w| (if w.label.is_empty() { w.placeholder } else { w.label }, w.value))
+                .map(|w| {
+                    let painted_beside = the_caption_painted_beside(&painted, &w);
+                    let name = if painted_beside.is_empty() { the_words_it_reads_by(&w) } else { painted_beside };
+                    (name, w.value)
+                })
                 .collect()
         }
         let mut bars_opened = 0;
@@ -1702,6 +1771,85 @@ mod tests {
         .expect("the rotation ran");
         let angle = (turned.1 .1 - turned.0 .1).atan2(turned.1 .0 - turned.0 .0).to_degrees();
         assert!((angle - 30.0).abs() < 1e-6, "the rotated line stands at {angle} deg, not 30");
+    }
+
+    /// THE PRIMITIVES, run as calls: the sizes carried by the call filled into the fields that stand at
+    /// the geometry, Enter, and the body of the shape in the part after it - counted by the node the
+    /// timeline gains, weighed by the volume the body holds. A size the shape will not take (no radius)
+    /// is the program's own refusal and the part holds no body it did not hold.
+    #[test]
+    fn the_primitives_make_their_bodies() {
+        let _turn = crate::checks::take_your_turn();
+        /// A FRESH PART, stood in, no sketch, no body.
+        fn a_fresh_part() -> qymcad::LiveLoop {
+            let mut program = qymcad::LiveLoop::start();
+            crate::checks::ask_the_core(&mut program, |core| {
+                core.key(qymcad::Key::Escape);
+                let new_part = core.word("tb-new-part-hint");
+                core.press_hint(&new_part);
+            })
+            .expect("the fixture was built");
+            program
+        }
+        /// THE SIZES A PRIMITIVE TAKES, read from the live tool by their painted captions, every number
+        /// field set to `size`.
+        fn the_sizes(program: &mut qymcad::LiveLoop, code: &str, size: f64) -> serde_json::Value {
+            let code = code.to_string();
+            crate::checks::ask_the_core(program, move |core| {
+                // every field of a primitive is one of its sizes, and each shape gets sizes it can
+                // build: a cone of equal radii is nothing, a tube as thick as its ring is too
+                let of = |name: &str| {
+                    let n = name.to_lowercase();
+                    if n.contains("top") {
+                        5.0
+                    } else if n.contains("bottom") {
+                        10.0
+                    } else if n.contains("ring") {
+                        12.0
+                    } else if n.contains("tube") {
+                        4.0
+                    } else if n.contains("radius") {
+                        8.0
+                    } else {
+                        size
+                    }
+                };
+                let mut given = serde_json::Map::new();
+                for p in parameters(core, &code) {
+                    given.insert(p.name.clone(), serde_json::json!(of(&p.name).to_string()));
+                }
+                serde_json::Value::Object(given)
+            })
+            .expect("the schema was read")
+        }
+        for (code, kind) in [("part.box", "Box3"), ("part.cylinder", "Cylinder"), ("part.sphere", "Sphere"), ("part.cone", "Cone"), ("part.torus", "Torus"), ("part.prism", "Prism")] {
+            let mut program = a_fresh_part();
+            let given = the_sizes(&mut program, code, 15.0);
+            assert!(!given.as_object().expect("the sizes are an object").is_empty(), "{code} puts up no size field");
+            let answered = crate::checks::ask_the_core(&mut program, {
+                let given = given.clone();
+                let code = code.to_string();
+                move |core| call(core, &code, &given)
+            })
+            .expect("the call answered");
+            assert!(matches!(answered, TheCall::Answered { .. }), "{code} did not run: {answered:?}");
+            let made = crate::checks::ask_the_core(&mut program, move |core| {
+                let document = core.document();
+                let node = document.features.iter().rfind(|f| f.kind == kind);
+                (node.map(|n| (n.error.is_none(), n.suppressed)), document.bodies.iter().map(|b| b.volume).fold(0.0, f64::max))
+            })
+            .expect("the document was read");
+            assert_eq!(made.0, Some((true, false)), "{code} left its node unbuilt or suppressed");
+            assert!(made.1 > 0.0, "{code} left no body of any volume");
+        }
+        // A SPHERE OF NO RADIUS is refused in the program's words, the part as it stood
+        let mut program = a_fresh_part();
+        let stood = crate::checks::ask_the_core(&mut program, |core| core.document()).expect("the document was read");
+        let answered = crate::checks::ask_the_core(&mut program, |core| call(core, "part.sphere", &serde_json::json!({ "Radius": "0" }))).expect("the call answered");
+        let TheCall::Refused(words) = &answered else { panic!("a sphere of no radius was not refused: {answered:?}") };
+        assert!(!words.trim().is_empty(), "the refused sphere said nothing");
+        let after = crate::checks::ask_the_core(&mut program, |core| core.document()).expect("the document was read");
+        assert_eq!(after, stood, "a refused primitive changed the document");
     }
 
     /// THE PROBLEMS THAT STAND AFTER A CALL are carried in its answer, in the words the acceptance
