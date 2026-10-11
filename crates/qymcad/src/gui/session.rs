@@ -1511,6 +1511,25 @@ impl AgentSession<'_> {
         (!behind).then_some(bar)
     }
 
+    /// THE PROBLEMS THAT STAND AFTER A STEP, in the words the acceptance checks use - a chosen subset of
+    /// what they look at after every step of a person, over these same read-outs: nothing waiting for a
+    /// click with no bar of options saying so, no bar standing with nothing in hand behind it, no key of
+    /// the catalogue on screen instead of words, no letter the font cannot draw. The agent's calls are
+    /// answered with these beside their outcome, so a call that leaves the program in a state a person
+    /// would be warned about does not answer as if all was well.
+    pub fn the_standing_problems(&mut self) -> Vec<String> {
+        let mut problems = Vec::new();
+        if let Some(what) = self.waiting_without_bar() {
+            problems.push(format!("{what} waits for a click, and no bar of options says so"));
+        }
+        if let Some(bar) = self.bar_with_nothing_in_hand() {
+            problems.push(format!("a bar of options stands with nothing in hand behind it: {bar:?}"));
+        }
+        problems.extend(self.words_that_are_keys().into_iter().map(|w| format!("a key of the catalogue stands on screen instead of words: {w:?}")));
+        problems.extend(self.words_without_glyphs().into_iter().map(|w| format!("drawn with a letter the font does not have, a box on screen: {w:?}")));
+        problems
+    }
+
     pub fn worst_frame(&mut self) -> Duration {
         std::mem::take(&mut self.win.worst_frame)
     }

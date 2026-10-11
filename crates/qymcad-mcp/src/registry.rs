@@ -39,8 +39,9 @@ pub(crate) enum TheCall {
 /// CALL AN OPERATION by its name, through the frame every call runs in: the parameters the call carried
 /// are checked against the operation's own schema - read from the live tool, the reading leaving the
 /// document as it stood - then the entry's run works its gestures over the agent's session, the program
-/// is waited to rest, and the answer is the status line, the problems found, and the outcome. Every
-/// refusal is said in words and leaves the document as it stood.
+/// is waited to rest, and the answer is the status line, the problems that stand after the call (the
+/// program's own invariants, in the words the acceptance checks use), and the outcome. Every refusal is
+/// said in words and leaves the document as it stood.
 pub(crate) fn call(core: &mut qymcad::AgentSession, name: &str, given: &serde_json::Value) -> TheCall {
     let Some(entry) = by_code(name) else {
         return TheCall::Refused(format!("{name}: no operation of the program is named so; search-tool finds what the program offers"));
@@ -59,7 +60,7 @@ pub(crate) fn call(core: &mut qymcad::AgentSession, name: &str, given: &serde_js
     let answered = the_run(core, entry.command.code, given);
     let status = core.status();
     match answered {
-        Answered::Ran(outcome) => TheCall::Answered { status, problems: Vec::new(), outcome },
+        Answered::Ran(outcome) => TheCall::Answered { status, problems: core.the_standing_problems(), outcome },
         Answered::Refused(words) => TheCall::Refused(words),
     }
 }
@@ -514,5 +515,31 @@ mod tests {
         let TheCall::Answered { status, problems, outcome } = &answered else { panic!("the take of the extrude over its own sketch did not run: {answered:?}") };
         assert!(!status.trim().is_empty() && !outcome.trim().is_empty(), "the answer carried no words: {answered:?}");
         assert!(problems.is_empty(), "the take itself must leave no problem: {answered:?}");
+    }
+
+    /// THE PROBLEMS THAT STAND AFTER A CALL are carried in its answer, in the words the acceptance
+    /// checks use: nothing waiting for a click with no bar saying so, no bar standing with nothing in
+    /// hand behind it, no key of the catalogue on screen instead of words, no letter the font cannot
+    /// draw. The check reads what stands beside what the call answered, and the answer carries exactly
+    /// that. A call that leaves the program in a state a person would be warned about cannot be made
+    /// here by any means - the program puts a bar behind every picker it arms and clears a stray one in
+    /// the frame the read settles into (probed: every take of the catalogue, over a bare program, a
+    /// block, an open sketch, and each followed by Undo, stands clean) - so the words of the problems
+    /// are the oracle's own, and the carrying is what is checked.
+    #[test]
+    fn the_problems_that_stand_after_a_call_are_carried_in_its_answer() {
+        let _turn = crate::checks::take_your_turn();
+        let mut program = qymcad::LiveLoop::start();
+        let answered = crate::checks::ask_the_core(&mut program, |core| {
+            let answered = call(core, "part.box", &serde_json::json!({}));
+            let standing = core.the_standing_problems();
+            let held: Vec<String> = Vec::new();
+            put_down_what_the_take_landed(core, &held);
+            (answered, standing)
+        })
+        .expect("the call answered");
+        let (TheCall::Answered { problems, .. }, standing) = &answered else { panic!("the box did not run: {answered:?}") };
+        assert_eq!(problems, standing, "the answer does not carry the problems that stand");
+        assert!(problems.is_empty(), "a healthy take left a problem: {problems:?}");
     }
 }
