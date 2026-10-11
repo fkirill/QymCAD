@@ -201,6 +201,14 @@ const RICHER_RUNS: &[Wired] = &[
     Wired { code: "sketch.line", run: draw_a_chain, takes: &[Take { name: "points", kind: "points" }] },
     Wired { code: "sketch.circle", run: draw_a_circle, takes: &[Take { name: "points", kind: "points" }] },
     Wired { code: "sketch.rect", run: draw_a_rectangle, takes: &[Take { name: "points", kind: "points" }] },
+    Wired { code: "sketch.point", run: draw_by_clicks, takes: &[Take { name: "points", kind: "points" }] },
+    Wired { code: "sketch.arc", run: draw_by_clicks, takes: &[Take { name: "points", kind: "points" }] },
+    Wired { code: "sketch.circle3", run: draw_by_clicks, takes: &[Take { name: "points", kind: "points" }] },
+    Wired { code: "sketch.polygon", run: draw_by_clicks, takes: &[Take { name: "points", kind: "points" }] },
+    Wired { code: "sketch.slot", run: draw_by_clicks, takes: &[Take { name: "points", kind: "points" }] },
+    Wired { code: "sketch.ellipse", run: draw_by_clicks, takes: &[Take { name: "points", kind: "points" }] },
+    Wired { code: "sketch.spline", run: draw_a_spline, takes: &[Take { name: "points", kind: "points" }] },
+    Wired { code: "sketch.text", run: write_a_text, takes: &[Take { name: "points", kind: "points" }, Take { name: "text", kind: "text" }] },
 ];
 
 /// DRAW A CHAIN OF LINES: the tool taken, every place of the sheet clicked in turn, the chain ended as a
@@ -262,17 +270,107 @@ fn draw_a_rectangle(core: &mut qymcad::AgentSession, code: &str, given: &serde_j
 }
 
 /// THE SKETCH OPEN FOR EDITING, with its counts of what a drawing adds to; `None` when none is open.
-fn the_open_sketch(core: &mut qymcad::AgentSession) -> Option<TheOpenSketch> {
+fn the_open_sketch(core: &mut qymcad::AgentSession) -> Option<qymcad::SketchInfo> {
     let document = core.document();
     let name = document.editing.clone()?;
-    document.sketches.iter().find(|s| s.name == name).map(|s| TheOpenSketch { name: name.clone(), lines: s.lines, circles: s.circles })
+    document.sketches.iter().find(|s| s.name == name).cloned()
 }
 
-/// THE SKETCH OPEN FOR EDITING, counted.
-struct TheOpenSketch {
-    name: String,
-    lines: usize,
-    circles: usize,
+/// EVERYTHING A DRAWING ADDS TO, counted together: the points, lines, arcs, circles, ellipses,
+/// splines and texts of the sheet.
+fn things(s: &qymcad::SketchInfo) -> usize {
+    s.points + s.lines + s.arcs + s.circles + s.ellipses + s.splines + s.texts
+}
+
+/// DRAW WITH THE TOOL OF THE CODE, its places clicked in turn: the tool taken, the fields the call
+/// carried filled into its bar, every place of the sheet clicked, the drawing ended as the person ends
+/// it, with Esc. Answered only for a drawing that came to be - the open sketch holds more after the
+/// call than before.
+fn draw_by_clicks(core: &mut qymcad::AgentSession, code: &str, given: &serde_json::Value) -> Answered {
+    let Some(entry) = by_code(code) else { return Answered::Refused(format!("{code}: no operation of the program is named so")) };
+    let Some(places) = the_places(given) else { return Answered::Refused(format!("the {} needs its places on the sheet", entry.command.name())) };
+    let Some(sketch) = the_open_sketch(core) else { return Answered::Refused("no sketch is open to draw in - open one and draw again".to_string()) };
+    take_the_command(core, entry.command);
+    fill_the_fields(core, given);
+    for (x, y) in &places {
+        core.click_on_sketch(*x, *y);
+    }
+    core.key(qymcad::Key::Escape);
+    match the_open_sketch(core) {
+        Some(after) if after.name == sketch.name && things(&after) > things(&sketch) => Answered::Ran(format!("{} drawn of {} places of {}", entry.command.name(), places.len(), sketch.name)),
+        _ => Answered::Refused(format!("nothing was drawn: {}", core.status())),
+    }
+}
+
+/// DRAW A SPLINE: its nodes clicked one by one, the last one double-clicked, as the tool itself ends a
+/// spline of as many nodes as a person wants.
+fn draw_a_spline(core: &mut qymcad::AgentSession, code: &str, given: &serde_json::Value) -> Answered {
+    let Some(entry) = by_code(code) else { return Answered::Refused(format!("{code}: no operation of the program is named so")) };
+    let Some(places) = the_places(given) else { return Answered::Refused("the spline needs its places on the sheet, two at least".into()) };
+    let Some((last, nodes)) = places.split_last() else { return Answered::Refused("the spline needs its places on the sheet, two at least".into()) };
+    let Some(sketch) = the_open_sketch(core) else { return Answered::Refused("no sketch is open to draw in - open one and draw again".to_string()) };
+    take_the_command(core, entry.command);
+    for (x, y) in nodes {
+        core.click_on_sketch(*x, *y);
+    }
+    let at = core.on_sketch(last.0, last.1);
+    core.double_click(at);
+    match the_open_sketch(core) {
+        Some(after) if after.name == sketch.name && after.splines > sketch.splines => Answered::Ran(format!("a spline drawn through {} places of {}", places.len(), sketch.name)),
+        _ => Answered::Refused(format!("nothing was drawn: {}", core.status())),
+    }
+}
+
+/// WRITE A TEXT: the words and the height in the bar above, then a click places it - as geometry, or
+/// as a note. The words go into the field the tool's own title stands beside, the height as any field
+/// of the bar; the sketch holds a text more after the call than before.
+fn write_a_text(core: &mut qymcad::AgentSession, code: &str, given: &serde_json::Value) -> Answered {
+    let Some(entry) = by_code(code) else { return Answered::Refused(format!("{code}: no operation of the program is named so")) };
+    let Some(places) = the_places(given) else { return Answered::Refused("the text needs its place on the sheet".into()) };
+    let Some((at, _)) = places.split_first() else { return Answered::Refused("the text needs its place on the sheet".into()) };
+    let words = given.get("text").and_then(|t| t.as_str()).unwrap_or_default().to_string();
+    let Some(sketch) = the_open_sketch(core) else { return Answered::Refused("no sketch is open to draw in - open one and draw again".to_string()) };
+    take_the_command(core, entry.command);
+    fill_the_fields(core, given);
+    let caption = core.word("tool-text");
+    let writing = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        core.fill(&caption, &words);
+    }));
+    core.click_on_sketch(at.0, at.1);
+    core.key(qymcad::Key::Escape);
+    match (the_open_sketch(core), writing.is_ok()) {
+        (Some(after), true) if after.name == sketch.name && after.texts + after.notes > sketch.texts + sketch.notes => {
+            Answered::Ran(format!("the text {words:?} written at ({}, {}) of {}", at.0, at.1, sketch.name))
+        }
+        _ => Answered::Refused(format!("nothing was written: {}", core.status())),
+    }
+}
+
+/// THE FIELDS THE CALL CARRIED, filled into the bar the take put up: each by its own caption - the grey
+/// words of an empty field where the caption stands inside it - a number as its digits, words as they
+/// are. A field the call did not carry keeps what it came with; a value the program refuses to take is
+/// its own words in the status line, carried by the call's answer.
+fn fill_the_fields(core: &mut qymcad::AgentSession, given: &serde_json::Value) {
+    let Some(given) = given.as_object() else { return };
+    let fields = the_fields_on_screen(core);
+    for (name, value) in given {
+        if !fields.iter().any(|f| &f.name == name) {
+            continue; // not a field of the bar: the places of the drawing, or a name the call will be refused for
+        }
+        let as_words = match value {
+            serde_json::Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        let filling = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            core.fill(name, &as_words);
+        }));
+        if filling.is_err() {
+            let hinted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                core.fill_first_hinted(name, &as_words);
+            }));
+            let _ = hinted;
+        }
+    }
 }
 
 /// THE PLACES A CALL CARRIES, read as pairs of the sheet; `None` when the call carried none or a
@@ -572,9 +670,12 @@ mod tests {
             assert!(entry.run.is_some(), "{} is wired to no run", entry.command.code);
         }
         let _turn = crate::checks::take_your_turn();
+        // ON A BARE START every run answers in words - the take lands the commands that need nothing,
+        // and a run that needs what is not there (a drawing with no sketch open) refuses in the
+        // program's own words
         let mut program = qymcad::LiveLoop::start();
         let mut landed = 0;
-        for entry in the_registry() {
+        for entry in the_registry().iter().filter(|e| e.takes.is_empty()) {
             let code = entry.command.code;
             let answered = crate::checks::ask_the_core(&mut program, move |core| {
                 let the_run = by_code(code).expect("the code names an entry").run.expect("the entry is wired");
@@ -595,7 +696,36 @@ mod tests {
             };
             assert!(!said.is_empty(), "{} said nothing when it ran", entry.command.code);
         }
-        assert!(landed >= 20, "only {landed} of the commands landed their tool on a bare start; the runs have gone mute");
+        assert!(landed >= 15, "only {landed} of the take-only commands landed their tool on a bare start; the runs have gone mute");
+        // OVER AN OPEN SKETCH every run that takes parameters runs with them: the drawing tools land
+        // their own kinds, their places carried as the call carries them
+        let mut sketching = qymcad::LiveLoop::start();
+        crate::checks::ask_the_core(&mut sketching, |core| {
+            let new_part = core.word("start-new-part");
+            core.press_word(&new_part);
+            let xy = core.word("plane-xy-table");
+            core.press_word(&xy);
+        })
+        .expect("the fixture was built");
+        let mut aside = 0.0;
+        for entry in the_registry().iter().filter(|e| !e.takes.is_empty()) {
+            let code = entry.command.code;
+            // each drawing stands aside of the ones before it, so nothing lands on what exists
+            aside += 30.0;
+            let (a, b, c) = (aside + 5.0, aside + 15.0, aside + 15.0);
+            let answered = crate::checks::ask_the_core(&mut sketching, move |core| {
+                let the_run = by_code(code).expect("the code names an entry").run.expect("the entry is wired");
+                let mut given = serde_json::Map::new();
+                given.insert("points".into(), serde_json::json!([[a, 5.0], [b, 5.0], [c, 15.0]]));
+                given.insert("text".into(), serde_json::json!("a note"));
+                let answered = the_run(core, code, &serde_json::Value::Object(given));
+                let held: Vec<String> = Vec::new();
+                put_down_what_the_take_landed(core, &held);
+                answered
+            })
+            .expect("the run answered");
+            assert!(matches!(answered, Answered::Ran(_)), "{} drew nothing over the open sketch: {answered:?}", entry.command.code);
+        }
     }
 
     /// THE FRAME OF A CALL, checked at each of its refusals and at its answer: a name no operation
@@ -742,5 +872,98 @@ mod tests {
         let (TheCall::Answered { problems, .. }, standing) = &answered else { panic!("the box did not run: {answered:?}") };
         assert_eq!(problems, standing, "the answer does not carry the problems that stand");
         assert!(problems.is_empty(), "a healthy take left a problem: {problems:?}");
+    }
+
+    /// THE TOOLS DRAWN BY CLICKS - a point, an arc by its centre and ends, a circle through three
+    /// points, a polygon of a named number of sides, a slot, an ellipse, a text of given words, and a
+    /// spline ended by a double click - each run as a call over one open sketch, each checked by what
+    /// landed in the document, its own kind counted. The polygon's sides and the text's words are
+    /// carried as the call's parameters, filled into the bar the take put up.
+    #[test]
+    fn the_clicked_tools_draw_their_own_kinds() {
+        let _turn = crate::checks::take_your_turn();
+        let mut program = qymcad::LiveLoop::start();
+        crate::checks::ask_the_core(&mut program, |core| {
+            let new_part = core.word("start-new-part");
+            core.press_word(&new_part);
+            let xy = core.word("plane-xy-table");
+            core.press_word(&xy);
+        })
+        .expect("the fixture was built");
+        /// THE OPEN SKETCH, read whole.
+        fn the_open(core: &mut qymcad::AgentSession) -> qymcad::SketchInfo {
+            let document = core.document();
+            document.sketches.iter().find(|s| Some(&s.name) == document.editing.as_ref()).expect("the open sketch").clone()
+        }
+        /// THE THINGS OF A SKETCH, counted together.
+        fn things(s: &qymcad::SketchInfo) -> usize {
+            s.points + s.lines + s.arcs + s.circles + s.ellipses + s.splines + s.texts
+        }
+        /// ONE DRAWING CALL, answered; the field the tool's bar puts up, read from the live schema,
+        /// carried with the value the check names.
+        fn draw(program: &mut qymcad::LiveLoop, code: &str, places: &[[f64; 2]], field: Option<(String, String)>) -> TheCall {
+            let code = code.to_string();
+            let places = places.to_vec();
+            let field = field.map(|(n, v)| (n.to_string(), v));
+            crate::checks::ask_the_core(program, move |core| {
+                let schema = parameters(core, &code);
+                let mut given = serde_json::Map::new();
+                given.insert("points".into(), serde_json::json!(places));
+                if let Some((name, value)) = &field {
+                    assert!(schema.iter().any(|p| p.name == *name), "{code} puts up no field {name:?}: {schema:?}");
+                    given.insert(name.clone(), serde_json::json!(value));
+                }
+                call(core, &code, &serde_json::Value::Object(given))
+            })
+            .expect("the call answered")
+        }
+        /// THE FIELD A TOOL'S BAR PUTS UP, first of its schema beside the places, read from the live
+        /// tool.
+        fn the_first_field(program: &mut qymcad::LiveLoop, code: &str) -> Option<String> {
+            let code = code.to_string();
+            crate::checks::ask_the_core(program, move |core| parameters(core, &code).into_iter().find(|p| p.name != "points").map(|p| p.name)).expect("the schema was read")
+        }
+        let before = crate::checks::ask_the_core(&mut program, the_open).expect("the sketch was read");
+        // A POINT
+        let answered = draw(&mut program, "sketch.point", &[[5.0, 5.0]], None);
+        assert!(matches!(answered, TheCall::Answered { .. }), "the point did not run: {answered:?}");
+        let after = crate::checks::ask_the_core(&mut program, the_open).expect("the sketch was read");
+        assert_eq!(after.points, before.points + 1, "the point did not land");
+        // AN ARC by its centre and two ends
+        let answered = draw(&mut program, "sketch.arc", &[[0.0, 0.0], [10.0, 0.0], [0.0, 10.0]], None);
+        assert!(matches!(answered, TheCall::Answered { .. }), "the arc did not run: {answered:?}");
+        let arcs = crate::checks::ask_the_core(&mut program, the_open).expect("the sketch was read");
+        assert_eq!(arcs.arcs, after.arcs + 1, "the arc did not land");
+        // A CIRCLE THROUGH THREE POINTS
+        let answered = draw(&mut program, "sketch.circle3", &[[10.0, 0.0], [0.0, 10.0], [-10.0, 0.0]], None);
+        assert!(matches!(answered, TheCall::Answered { .. }), "the three-point circle did not run: {answered:?}");
+        let circles = crate::checks::ask_the_core(&mut program, the_open).expect("the sketch was read");
+        assert_eq!(circles.circles, arcs.circles + 1, "the three-point circle did not land");
+        // A POLYGON of six sides: its sides carried as the call's parameter, filled into the bar
+        let sides = the_first_field(&mut program, "sketch.polygon");
+        let answered = draw(&mut program, "sketch.polygon", &[[0.0, 0.0], [15.0, 0.0]], sides.map(|n| (n, "6".to_string())));
+        assert!(matches!(answered, TheCall::Answered { .. }), "the polygon did not run: {answered:?}");
+        let polygon = crate::checks::ask_the_core(&mut program, the_open).expect("the sketch was read");
+        assert_eq!(polygon.lines, circles.lines + 6, "the polygon's six sides did not land: {} lines", polygon.lines);
+        // A SLOT
+        let answered = draw(&mut program, "sketch.slot", &[[0.0, 0.0], [30.0, 0.0], [30.0, 5.0]], None);
+        assert!(matches!(answered, TheCall::Answered { .. }), "the slot did not run: {answered:?}");
+        let slot = crate::checks::ask_the_core(&mut program, the_open).expect("the sketch was read");
+        assert!(things(&slot) > things(&polygon), "the slot did not land");
+        // AN ELLIPSE by its centre and the ends of its axes
+        let answered = draw(&mut program, "sketch.ellipse", &[[0.0, 0.0], [20.0, 0.0], [0.0, 10.0]], None);
+        assert!(matches!(answered, TheCall::Answered { .. }), "the ellipse did not run: {answered:?}");
+        let ellipse = crate::checks::ask_the_core(&mut program, the_open).expect("the sketch was read");
+        assert_eq!(ellipse.ellipses, slot.ellipses + 1, "the ellipse did not land");
+        // A TEXT of given words, placed by a click
+        let answered = draw(&mut program, "sketch.text", &[[0.0, 0.0]], Some(("text".to_string(), "a note".to_string())));
+        assert!(matches!(answered, TheCall::Answered { .. }), "the text did not run: {answered:?}");
+        let text = crate::checks::ask_the_core(&mut program, the_open).expect("the sketch was read");
+        assert!(text.texts + text.notes > ellipse.texts + ellipse.notes, "the text did not land");
+        // A SPLINE, ended by a double click on its last node
+        let answered = draw(&mut program, "sketch.spline", &[[0.0, 0.0], [10.0, 10.0], [20.0, 0.0]], None);
+        assert!(matches!(answered, TheCall::Answered { .. }), "the spline did not run: {answered:?}");
+        let spline = crate::checks::ask_the_core(&mut program, the_open).expect("the sketch was read");
+        assert_eq!(spline.splines, ellipse.splines + 1, "the spline did not land");
     }
 }
