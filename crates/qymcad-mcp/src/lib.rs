@@ -390,4 +390,143 @@ mod tests {
         assert!(covered(&picture) > 1000, "a fitted block covers only {} pixels of its view", covered(&picture));
         wish(false, port, "the-token");
     }
+
+    /// THE AGENT'S OWN SCENARIO, the `user_case` shape, made wholly through calls - the door
+    /// `call-tool` runs - with the invariants read after every step: a sketch held at a parameter,
+    /// a housing grown from it, holes bored, a shell hollowing it, a second part whose sketch sits
+    /// on the face of the first, an assembly of the two, and a dimension edited in the middle of it
+    /// all. Every step answers with no problem standing; what each leaves in the document is
+    /// counted, not assumed.
+    #[test]
+    fn a_box_with_a_lid_is_built_whole_through_the_agent_s_calls() {
+        let _turn = take_your_turn();
+        let mut program = qymcad::LiveLoop::start();
+        // ONE CALL, answered - and checked: a step that runs leaves no problem standing.
+        fn step(program: &mut qymcad::LiveLoop, code: &str, given: serde_json::Value) -> String {
+            let code = code.to_string();
+            let named = code.clone();
+            let answered = crate::checks::ask_the_core(program, move |core| crate::registry::call(core, &code, &given)).expect("the call answered");
+            match answered {
+                crate::registry::TheCall::Answered { outcome, problems, .. } => {
+                    assert!(problems.is_empty(), "{named} left problems standing: {problems:?}");
+                    outcome
+                }
+                refused => panic!("{named} was refused: {refused:?}"),
+            }
+        }
+        // WHAT THE PROGRAM HOLDS, read between the steps.
+        fn read<T: Send + 'static>(program: &mut qymcad::LiveLoop, read: impl FnOnce(&mut qymcad::AgentSession) -> T + Send + 'static) -> T {
+            crate::checks::ask_the_core(program, read).expect("the program was read")
+        }
+        // THE NAME OF A FIELD the call wants, read from the operation's own schema - the way a
+        // client reads get-tool-schema before it calls.
+        fn the_field(program: &mut qymcad::LiveLoop, code: &str, needle: &str) -> String {
+            let code = code.to_string();
+            let needle = needle.to_string();
+            read(program, move |core| crate::registry::parameters(core, &code).into_iter().find(|f| f.name.to_lowercase().contains(&needle)).expect("the field is in the schema").name)
+        }
+        // THE HOUSING: a part, a sketch on the world plane, a rectangle held at w = 40 by a dimension
+        step(&mut program, "ui.key", serde_json::json!({ "key": "escape" }));
+        let button = |program: &mut qymcad::LiveLoop, key: &str| {
+            let key = key.to_string();
+            read(program, move |core| core.word(&key))
+        };
+        let new_part = button(&mut program, "tb-new-part-hint");
+        step(&mut program, "ui.button", serde_json::json!({ "hint": new_part }));
+        let pencil = button(&mut program, "g-sketch-pick-hint");
+        step(&mut program, "ui.button", serde_json::json!({ "hint": pencil }));
+        step(&mut program, "ui.click", serde_json::json!({ "at": [0.0, 0.0, 0.0] }));
+        step(&mut program, "parameters.set", serde_json::json!({ "name": "w", "expression": "40" }));
+        step(&mut program, "sketch.rect", serde_json::json!({ "points": [[10.0, 10.0], [50.0, 40.0]] }));
+        step(&mut program, "sketch.dim", serde_json::json!({ "points": [[30.0, 10.0], [30.0, 2.0]], "value": "w" }));
+        step(&mut program, "ui.key", serde_json::json!({ "key": "ctrl+enter" }));
+        let held = read(&mut program, |core| core.document().sketches[0].max[0] - core.document().sketches[0].min[0]);
+        assert!((held - 40.0).abs() < 1e-6, "the dimension did not hold the rectangle at w = 40: it spans {held}");
+        // THE HOUSING GROWN, HOLES BORED, THE SHELL HOLLOWING IT - each leaving its node green. The
+        // volume is read off the working body - the last solid standing of its own, as the oracles
+        // read it - for the document keeps the bodies a boolean worked on.
+        step(&mut program, "part.extrude", serde_json::json!({ "Length": "10" }));
+        let the_volume =
+            |program: &mut qymcad::LiveLoop| read(program, |core| core.document().bodies.into_iter().filter(|b| !b.consumed && !b.sheet).rfind(|b| b.volume > 0.0).expect("a body stands").volume);
+        let grown = the_volume(&mut program);
+        assert!((grown - 12000.0).abs() < 1.0, "the housing holds {grown}, not the 12000 of 40 x 30 x 10");
+        let (diameter, depth) = (the_field(&mut program, "part.hole", "diameter"), the_field(&mut program, "part.hole", "depth"));
+        step(&mut program, "part.hole", serde_json::json!({ "picks": [[30.0, 25.0, 10.0]], diameter: "10", depth: "12" }));
+        let holed = the_volume(&mut program);
+        assert!(holed < grown - 700.0, "the hole bored nothing: the housing still holds {holed}");
+        let thickness = the_field(&mut program, "part.shell", "thickness");
+        step(&mut program, "part.shell", serde_json::json!({ "picks": [[20.0, 25.0, 10.0]], thickness: "2" }));
+        let shelled = the_volume(&mut program);
+        assert!(read(&mut program, |core| core.document().features.iter().filter(|f| f.error.is_some()).count()) == 0, "a red node stands in the housing after the shell");
+        assert!(shelled < holed, "the shell hollowed nothing: the housing still holds {shelled}");
+        // A SECOND PART, ITS SKETCH ON THE FACE OF THE FIRST: the housing's part is finished into
+        // the assembly (the toolbar's own New-part button stands there, not in a part), and the
+        // pencil then clicks the front of the housing while the second part is the one being drawn
+        // in - the sheet belongs to the second part, the face to the first. The new-part word is
+        // read again, for its plate counts the parts.
+        step(&mut program, "ui.key", serde_json::json!({ "key": "ctrl+enter" }));
+        let new_part_again = button(&mut program, "tb-new-part-hint");
+        step(&mut program, "ui.button", serde_json::json!({ "hint": new_part_again }));
+        // THE NEIGHBOUR SEEN FROM WITHIN THE SECOND PART: "in context" ticked on, the first part's
+        // faces stand to be picked - a sketch of the second part on the first's face becomes a live
+        // reference between the two
+        let in_context = read(&mut program, |core| {
+            let label = core.word("wb-in-context");
+            core.widgets().into_iter().find(|w| w.kind == qymcad::Kind::CheckBox && w.label.ends_with(&label)).map(|w| w.checked == Some(false)).unwrap_or(true)
+        });
+        if in_context {
+            let the_switch = button(&mut program, "wb-in-context");
+            step(&mut program, "ui.button", serde_json::json!({ "hint": the_switch }));
+        }
+        step(&mut program, "ui.button", serde_json::json!({ "hint": pencil }));
+        // THE FRONT OF THE HOUSING, off every base plane of the world - a face a pencil click can
+        // tell from the grids, unlike a box seated on the origin
+        step(&mut program, "ui.click", serde_json::json!({ "at": [30.0, 10.0, 5.0] }));
+        let seat = read(&mut program, |core| core.document().sketches.last().cloned());
+        let seat = seat.expect("the sketch on the face stands");
+        assert!(seat.seat.starts_with("face of"), "the second part's first sketch sits on {} rather than the face of the first", seat.seat);
+        assert_eq!(seat.part, read(&mut program, |core| core.document().parts.last().cloned().map(|p| p.name)), "the sketch on the face belongs to another part than the second one");
+        step(&mut program, "sketch.line", serde_json::json!({ "points": [[5.0, 2.0], [5.0, 8.0]] }));
+        step(&mut program, "ui.key", serde_json::json!({ "key": "ctrl+enter" }));
+        // THE LID ITSELF: a sketch of the second part's own, on the world plane beside the housing
+        step(&mut program, "ui.button", serde_json::json!({ "hint": pencil }));
+        step(&mut program, "ui.click", serde_json::json!({ "at": [70.0, 15.0, 0.0] }));
+        step(&mut program, "sketch.rect", serde_json::json!({ "points": [[60.0, 0.0], [100.0, 30.0]] }));
+        step(&mut program, "ui.key", serde_json::json!({ "key": "ctrl+enter" }));
+        step(&mut program, "part.extrude", serde_json::json!({ "Length": "10" }));
+        let (parts, lid) = read(&mut program, |core| {
+            let d = core.document();
+            (d.parts.len(), d.bodies.into_iter().filter(|b| !b.consumed && !b.sheet).rfind(|b| b.volume > 0.0))
+        });
+        let lid = lid.expect("the lid's body stands");
+        assert_eq!(parts, 2, "the document holds {parts} parts, not two");
+        assert_eq!(lid.part, read(&mut program, |core| core.document().parts.last().cloned().map(|p| p.name)), "the last body standing belongs to the second part");
+        // THE ASSEMBLY: the lid's part finished into it, and the housing and the lid held by a
+        // rigid joint, the housing grounded by it
+        step(&mut program, "ui.key", serde_json::json!({ "key": "ctrl+enter" }));
+        step(&mut program, "assembly.joint", serde_json::json!({ "kind": "Rigid", "picks": [[45.0, 10.0, 5.0], [80.0, 15.0, 10.0]] }));
+        let joints = read(&mut program, |core| core.document().joints);
+        assert_eq!(joints.len(), 1, "the joint did not come to stand");
+        assert!(!joints[0].violated, "the joint does not hold: {:?}", joints[0]);
+        // A DIMENSION EDITED IN THE MIDDLE: w carried to 30, the rectangle follows, the housing with
+        // it, the sketch on the housing's face with the housing, the joint holds, nothing goes red
+        step(&mut program, "parameters.set", serde_json::json!({ "name": "w", "expression": "30" }));
+        let document = read(&mut program, |core| core.document());
+        let span = document.sketches[0].max[0] - document.sketches[0].min[0];
+        assert!((span - 30.0).abs() < 1e-6, "carrying w to 30 left the rectangle spanning {span}");
+        let housing = read(&mut program, |core| {
+            let d = core.document();
+            let first = d.parts[0].name.clone();
+            d.bodies.into_iter().filter(|b| !b.consumed && !b.sheet).rfind(|b| b.part.as_deref() == Some(first.as_str())).expect("the housing stands").volume
+        });
+        assert!(housing < shelled, "carrying w to 30 left the housing as large as it was: {housing} against {shelled}");
+        assert!(
+            document.features.iter().all(|f| f.error.is_none()),
+            "a red node stands after the dimension was edited: {:?}",
+            document.features.iter().filter(|f| f.error.is_some()).collect::<Vec<_>>()
+        );
+        assert_eq!(document.joints.len(), 1, "the joint did not survive the edit");
+        assert!(!document.joints[0].violated, "the joint does not hold after the edit");
+        assert_eq!(document.parts.len(), 2, "the edit lost a part");
+    }
 }

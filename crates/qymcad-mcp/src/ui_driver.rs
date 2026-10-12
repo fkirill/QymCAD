@@ -30,19 +30,34 @@ pub(crate) const THE_PERSON_S_GESTURES: &[General] = &[
     General { code: "ui.type", article: "general/15-agent", name_key: "mcp-ui-type", synonyms: &["keyboard"], run: type_words, takes: &[Take { name: "text", kind: "text" }] },
 ];
 
-/// PRESS A BUTTON by the word its own plate shows while the pointer rests on it - the toolbar's and
-/// the panel's buttons, as a person takes them. The word is the program's own, in the language it
-/// speaks; a word no button shows is refused in words, and nothing is pressed.
+/// PRESS A BUTTON by the word of its own - the word its plate shows while the pointer rests on it,
+/// or the word it wears as its caption (the word buttons and the ticks of the top bar) - as a
+/// person takes them. The word is the program's own, in the language it speaks; a word no button
+/// shows is refused in words, and nothing is pressed.
 fn press_a_button(core: &mut qymcad::AgentSession, _code: &str, given: &serde_json::Value) -> Answered {
-    let Some(hint) = the_words_of(given, "hint") else { return Answered::Refused("the press needs the word the button's own plate shows while the pointer rests on it".into()) };
+    let Some(hint) = the_words_of(given, "hint") else {
+        return Answered::Refused("the press needs the word of the button: the word its plate shows while the pointer rests on it, or the word it wears".into());
+    };
     // THE WORD AS THE WINDOW SHOWS IT: a word that names a key of the dictionary is said as the
     // window says it, so a client that knows the key reaches the button all the same
     let shown = if core.find_hint(&hint).is_some() { hint.clone() } else { core.word(&hint) };
-    let Some(at) = core.find_hint(&shown) else {
-        return Answered::Refused(format!("{hint}: no button of the window shows this word on its plate; the words are the program's own, as the window shows them"));
+    let Some(at) = core.find_hint(&shown).or_else(|| the_button_that_wears(core, &shown)) else {
+        return Answered::Refused(format!("{hint}: no button of the window shows this word, on its plate or as its caption; the words are the program's own, as the window shows them"));
     };
     core.click(at);
     Answered::Ran(format!("the button of {shown} pressed"))
+}
+
+/// THE BUTTON THAT WEARS THE WORD: a word button or a tick of the bar, found by the words on it as
+/// the widget list reads them. `None` when none wears the word, or more than one does - two words
+/// alike are two buttons, and a gesture that cannot say which presses neither.
+fn the_button_that_wears(core: &mut qymcad::AgentSession, word: &str) -> Option<qymcad::Pos2> {
+    let wearing: Vec<qymcad::Widget> =
+        core.widgets().into_iter().filter(|w| matches!(w.kind, qymcad::Kind::Button | qymcad::Kind::CheckBox) && (w.label == word || w.label.ends_with(&format!(" {word}")))).collect();
+    match wearing.as_slice() {
+        [one] => Some(one.rect.center()),
+        _ => None,
+    }
 }
 
 /// ONE PLACE A CLICK CAN GO: a pair of the sheet of the open sketch, or a triple of the space of
