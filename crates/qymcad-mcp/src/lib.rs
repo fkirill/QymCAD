@@ -391,6 +391,39 @@ mod tests {
         wish(false, port, "the-token");
     }
 
+    // ONE CALL, answered - and checked: a step that runs leaves no problem standing.
+    fn step(program: &mut qymcad::LiveLoop, code: &str, given: serde_json::Value) -> String {
+        let code = code.to_string();
+        let named = code.clone();
+        let answered = crate::checks::ask_the_core(program, move |core| crate::registry::call(core, &code, &given)).expect("the call answered");
+        match answered {
+            crate::registry::TheCall::Answered { outcome, problems, .. } => {
+                assert!(problems.is_empty(), "{named} left problems standing: {problems:?}");
+                outcome
+            }
+            refused => panic!("{named} was refused: {refused:?}"),
+        }
+    }
+
+    // WHAT THE PROGRAM HOLDS, read between the steps.
+    fn read<T: Send + 'static>(program: &mut qymcad::LiveLoop, read: impl FnOnce(&mut qymcad::AgentSession) -> T + Send + 'static) -> T {
+        crate::checks::ask_the_core(program, read).expect("the program was read")
+    }
+
+    // THE WORD OF A KEY, as the window shows it.
+    fn button(program: &mut qymcad::LiveLoop, key: &str) -> String {
+        let key = key.to_string();
+        read(program, move |core| core.word(&key))
+    }
+
+    // THE NAME OF A FIELD the call wants, read from the operation's own schema - the way a
+    // client reads get-tool-schema before it calls.
+    fn the_field(program: &mut qymcad::LiveLoop, code: &str, needle: &str) -> String {
+        let code = code.to_string();
+        let needle = needle.to_string();
+        read(program, move |core| crate::registry::parameters(core, &code).into_iter().find(|f| f.name.to_lowercase().contains(&needle)).expect("the field is in the schema").name)
+    }
+
     /// THE AGENT'S OWN SCENARIO, the `user_case` shape, made wholly through calls - the door
     /// `call-tool` runs - with the invariants read after every step: a sketch held at a parameter,
     /// a housing grown from it, holes bored, a shell hollowing it, a second part whose sketch sits
@@ -401,36 +434,8 @@ mod tests {
     fn a_box_with_a_lid_is_built_whole_through_the_agent_s_calls() {
         let _turn = take_your_turn();
         let mut program = qymcad::LiveLoop::start();
-        // ONE CALL, answered - and checked: a step that runs leaves no problem standing.
-        fn step(program: &mut qymcad::LiveLoop, code: &str, given: serde_json::Value) -> String {
-            let code = code.to_string();
-            let named = code.clone();
-            let answered = crate::checks::ask_the_core(program, move |core| crate::registry::call(core, &code, &given)).expect("the call answered");
-            match answered {
-                crate::registry::TheCall::Answered { outcome, problems, .. } => {
-                    assert!(problems.is_empty(), "{named} left problems standing: {problems:?}");
-                    outcome
-                }
-                refused => panic!("{named} was refused: {refused:?}"),
-            }
-        }
-        // WHAT THE PROGRAM HOLDS, read between the steps.
-        fn read<T: Send + 'static>(program: &mut qymcad::LiveLoop, read: impl FnOnce(&mut qymcad::AgentSession) -> T + Send + 'static) -> T {
-            crate::checks::ask_the_core(program, read).expect("the program was read")
-        }
-        // THE NAME OF A FIELD the call wants, read from the operation's own schema - the way a
-        // client reads get-tool-schema before it calls.
-        fn the_field(program: &mut qymcad::LiveLoop, code: &str, needle: &str) -> String {
-            let code = code.to_string();
-            let needle = needle.to_string();
-            read(program, move |core| crate::registry::parameters(core, &code).into_iter().find(|f| f.name.to_lowercase().contains(&needle)).expect("the field is in the schema").name)
-        }
         // THE HOUSING: a part, a sketch on the world plane, a rectangle held at w = 40 by a dimension
         step(&mut program, "ui.key", serde_json::json!({ "key": "escape" }));
-        let button = |program: &mut qymcad::LiveLoop, key: &str| {
-            let key = key.to_string();
-            read(program, move |core| core.word(&key))
-        };
         let new_part = button(&mut program, "tb-new-part-hint");
         step(&mut program, "ui.button", serde_json::json!({ "hint": new_part }));
         let pencil = button(&mut program, "g-sketch-pick-hint");
@@ -528,5 +533,45 @@ mod tests {
         assert_eq!(document.joints.len(), 1, "the joint did not survive the edit");
         assert!(!document.joints[0].violated, "the joint does not hold after the edit");
         assert_eq!(document.parts.len(), 2, "the edit lost a part");
+    }
+
+    /// WHOSE STEP IS WHOSE in the undo list: every step the agent's calls lay carries the agent's
+    /// name, and the person's own steps carry none. The person takes the agent's step back with
+    /// their own Ctrl+Z - the marked name moves to redo - and makes a step of their own through
+    /// their own window, the command search and a box; the list tells the three apart.
+    #[test]
+    fn the_agent_s_steps_carry_its_mark_and_the_person_s_carry_none() {
+        let _turn = take_your_turn();
+        let mut program = qymcad::LiveLoop::start();
+        // THE AGENT MAKES A PART AND A CYLINDER IN IT: whatever steps its calls lay, all carry the mark
+        step(&mut program, "ui.key", serde_json::json!({ "key": "escape" }));
+        let new_part = button(&mut program, "tb-new-part-hint");
+        step(&mut program, "ui.button", serde_json::json!({ "hint": new_part }));
+        step(&mut program, "part.cylinder", serde_json::json!({ "Radius": "10", "Height": "10" }));
+        let mark = format!(" ({})", qymcad_i18n::tr("mcp-the-agent"));
+        let undo = read(&mut program, |core| core.document().undo);
+        assert!(!undo.is_empty(), "the agent's work laid no undo step at all");
+        assert!(undo.iter().all(|s| s.ends_with(&mark)), "a step of the agent's carries no mark: {undo:?}");
+        // THE PERSON TAKES THE AGENT'S STEP BACK with their own Ctrl+Z: the marked name moves to redo
+        let had = undo.len();
+        let was_last = undo.last().cloned().expect("the step stood");
+        program.the_person_s_key(qymcad::Modifiers::COMMAND, qymcad::Key::Z);
+        let (undo, redo) = read(&mut program, |core| {
+            let d = core.document();
+            (d.undo, d.redo)
+        });
+        assert_eq!(undo.len() + 1, had, "the person's undo took no step back: {undo:?}");
+        assert_eq!(redo.last(), Some(&was_last), "the step the person took back is not the agent's marked one: {redo:?}");
+        // THE PERSON MAKES A STEP OF THEIR OWN through their own window: the command search by their
+        // own keys, a box, applied with its own Enter - a step with no mark beside the agent's
+        let box_name = read(&mut program, |_core| qymcad::COMMANDS.iter().find(|c| c.code == "part.box").expect("the box is in the catalogue").name());
+        program.the_person_s_key(qymcad::Modifiers::COMMAND, qymcad::Key::K);
+        program.the_person_types(&box_name);
+        program.the_person_s_key(qymcad::Modifiers::default(), qymcad::Key::Enter);
+        program.the_person_s_key(qymcad::Modifiers::default(), qymcad::Key::Enter);
+        let undo = read(&mut program, |core| core.document().undo);
+        let last = undo.last().cloned().unwrap_or_else(|| panic!("the person's box laid no step: {undo:?}"));
+        assert!(!last.ends_with(&mark), "the person's own step carries the agent's mark: {undo:?}");
+        assert!(undo.iter().rev().skip(1).all(|s| s.ends_with(&mark)), "the agent's steps lost their mark under the person's: {undo:?}");
     }
 }

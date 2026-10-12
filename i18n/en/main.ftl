@@ -2770,6 +2770,7 @@ settings-mcp-token = Pairing token
 settings-mcp-token-hint = A client must carry this token in every request; one without it is refused and nothing changes. Copy it into the client's settings.
 settings-mcp-token-none = The token is made when the server is first switched on.
 settings-mcp-copy = Copy
+mcp-the-agent = the agent
 mcp-ui-button = Press a button
 mcp-ui-click = Click a place
 mcp-ui-field = Fill a field

@@ -3945,6 +3945,23 @@ pub(crate) fn refresh_interference(bv: qymcad_ui_state::BodyView, drag: qymcad_u
     interference.pairs = pairs;
 }
 
+/// HOW MANY UNDO STEPS STAND, for the pump to tell the agent's slice from what stood before it.
+pub(crate) fn the_undo_steps_standing(app: &App) -> usize {
+    app.disk.edits.undo.len()
+}
+
+/// THE AGENT'S MARK on the undo steps its frames laid (the steps beyond `from`): every step made
+/// while the agent ran carries the agent's name, so the person reading the undo list - or pressing
+/// Undo - can tell whose step is whose. The steps of the person's own frames carry no mark.
+pub(crate) fn mark_the_agent_s_steps(app: &mut App, from: usize) {
+    let mark = format!(" ({})", crate::i18n::tr("mcp-the-agent"));
+    for step in app.disk.edits.undo.iter_mut().skip(from) {
+        if !step.name.ends_with(&mark) {
+            step.name = format!("{}{}", step.name, mark);
+        }
+    }
+}
+
 #[cfg(test)]
 /// The checks that the INTERFACE goes through the dictionary. They stayed with the application when the
 /// dictionary moved out: what they watch is the panels, not the catalogue.

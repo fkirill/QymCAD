@@ -2730,6 +2730,27 @@ impl LiveLoop {
         self.win.run(&mut self.app, egui::Modifiers::default(), Vec::new(), false);
         self
     }
+
+    /// THE PERSON'S OWN KEY, read by the person's own window: the frame runs as the live frame runs,
+    /// with the key in it, held with its modifiers as a person holds them. What the key does is what
+    /// a person gets - a step of THEIR undo history, taken back by their own Ctrl+Z, and told apart
+    /// from the agent's by carrying no mark.
+    pub fn the_person_s_key(&mut self, modifiers: Modifiers, key: Key) -> &mut Self {
+        let press = |pressed| egui::Event::Key { key, physical_key: None, pressed, repeat: false, modifiers };
+        crate::mcp::pump(&mut self.app, &self.win.ctx);
+        self.win.run(&mut self.app, modifiers, vec![press(true)], false);
+        crate::mcp::pump(&mut self.app, &self.win.ctx);
+        self.win.run(&mut self.app, modifiers, vec![press(false)], false);
+        self
+    }
+
+    /// THE PERSON'S OWN TYPING, read by the person's own window into whatever holds its keyboard -
+    /// a field the person clicked, a search the person is searching by.
+    pub fn the_person_types(&mut self, text: &str) -> &mut Self {
+        crate::mcp::pump(&mut self.app, &self.win.ctx);
+        self.win.run(&mut self.app, Modifiers::default(), vec![egui::Event::Text(text.to_string())], false);
+        self
+    }
 }
 
 /// THE BOX AROUND WHAT IS DRAWN IN A SKETCH, in the coordinates of the sheet: the points a person put there, and the

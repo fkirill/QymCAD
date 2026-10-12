@@ -157,6 +157,7 @@ pub(crate) fn pump(app: &mut App, ctx: &egui::Context) {
     if the_person_holds_it(app, ctx) {
         return;
     }
+    let steps_before = crate::gui::the_undo_steps_standing(app);
     let (mut work, answer, settling, mut core) = match RUNNING.lock().ok().and_then(|mut running| running.take()) {
         Some(running) => (running.work, running.answer, running.settling, AgentSession::with_hands(running.hands, app)),
         None => {
@@ -176,6 +177,9 @@ pub(crate) fn pump(app: &mut App, ctx: &egui::Context) {
     // a frame later - the program is waited out before anything is answered, a slice to a frame.
     let quiet = done && core.settle_for(SLICE);
     let hands = core.hands();
+    // THE STEPS THIS SLICE LAID carry the agent's mark, so the person reading the undo list - or
+    // pressing Undo - can tell whose step is whose
+    crate::gui::mark_the_agent_s_steps(app, steps_before);
     // THE AGENT NEVER ANSWERS A CHOOSER: a gesture of its raised one, and the person's answer is the only
     // one. The call is answered so, the chooser stands open, and nothing is changed by the call.
     if done && quiet && app.asking_for_a_file() {
