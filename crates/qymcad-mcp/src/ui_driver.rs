@@ -17,6 +17,7 @@ use crate::registry::{the_fields_on_screen, the_names_of, the_words_of, Answered
 pub(crate) const THE_PERSON_S_GESTURES: &[General] = &[
     General { code: "ui.button", article: "general/15-agent", name_key: "mcp-ui-button", synonyms: &["toolbar", "plate"], run: press_a_button, takes: &[Take { name: "hint", kind: "text" }] },
     General { code: "ui.click", article: "general/15-agent", name_key: "mcp-ui-click", synonyms: &["point", "tap"], run: click_a_place, takes: &[Take { name: "at", kind: "place" }] },
+    General { code: "ui.pick", article: "general/15-agent", name_key: "mcp-ui-pick", synonyms: &["row", "tree", "select"], run: pick_a_row, takes: &[Take { name: "name", kind: "text" }] },
     General {
         code: "ui.field",
         article: "general/15-agent",
@@ -147,6 +148,19 @@ fn fill_a_field(core: &mut qymcad::AgentSession, _code: &str, given: &serde_json
             Answered::Refused(format!("{label}: no field of the window reads so; the fields that stand: {standing}"))
         }
     }
+}
+
+/// PICK A ROW OF THE TREE by its own words - the name a sketch, a part or a joint carries in the
+/// list - as a person clicks it: the row nearest the head of the list that reads so. The pick
+/// stands for whatever the next gesture takes: a command over the selected sketch, a rename, a
+/// joint's row. A name no row reads by is refused in words.
+fn pick_a_row(core: &mut qymcad::AgentSession, _code: &str, given: &serde_json::Value) -> Answered {
+    let Some(name) = the_words_of(given, "name") else { return Answered::Refused("the pick needs the name the row reads by".into()) };
+    let Some(at) = core.find(&name, qymcad::pos2(0.0, 300.0)) else {
+        return Answered::Refused(format!("{name}: no row of the tree reads so"));
+    };
+    core.click(at.center());
+    Answered::Ran(format!("the row of {name} picked"))
 }
 
 /// WALK A MENU by the words of its items, in the order they are walked - the menu bar and the menus

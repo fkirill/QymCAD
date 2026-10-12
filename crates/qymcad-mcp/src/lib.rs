@@ -535,6 +535,62 @@ mod tests {
         assert_eq!(document.parts.len(), 2, "the edit lost a part");
     }
 
+    /// A ROW OF THE TREE IS PICKED BY ITS NAME: a second take over the same sketch needs the sketch
+    /// selected again, and the agent reaches the row as the person does - its own words clicked.
+    /// Reported behaviour: no gesture could select a finished sketch, so a second extrusion over
+    /// one sketch was impossible over the server.
+    #[test]
+    fn a_row_of_the_tree_is_picked_by_its_name() {
+        let _turn = take_your_turn();
+        let mut program = qymcad::LiveLoop::start();
+        step(&mut program, "ui.key", serde_json::json!({ "key": "escape" }));
+        let new_part = button(&mut program, "tb-new-part-hint");
+        step(&mut program, "ui.button", serde_json::json!({ "hint": new_part }));
+        let pencil = button(&mut program, "g-sketch-pick-hint");
+        step(&mut program, "ui.button", serde_json::json!({ "hint": pencil }));
+        step(&mut program, "ui.click", serde_json::json!({ "at": [0.0, 0.0, 0.0] }));
+        step(&mut program, "sketch.circle", serde_json::json!({ "points": [[10.0, 10.0], [20.0, 10.0]] }));
+        step(&mut program, "sketch.circle", serde_json::json!({ "points": [[25.0, 10.0], [35.0, 10.0]] }));
+        step(&mut program, "ui.key", serde_json::json!({ "key": "ctrl+enter" }));
+        // THE FIRST EXTRUSION over one contour of the sketch, the whole ladder
+        let _ = crate::checks::ask_the_core(&mut program, move |core| crate::registry::call(core, "part.extrude", &serde_json::json!({}))).expect("the take answered");
+        step(&mut program, "ui.click", serde_json::json!({ "at": [10.0, 10.0] }));
+        step(&mut program, "ui.key", serde_json::json!({ "key": "enter" }));
+        step(&mut program, "ui.field", serde_json::json!({ "label": "Length", "text": "5" }));
+        step(&mut program, "ui.key", serde_json::json!({ "key": "enter" }));
+        // THE ROW OF THE SKETCH picked by its own words, and the SECOND extrusion over the other
+        // contour of the same sketch follows
+        step(&mut program, "ui.pick", serde_json::json!({ "name": "Sketch 1" }));
+        let _ = crate::checks::ask_the_core(&mut program, move |core| crate::registry::call(core, "part.extrude", &serde_json::json!({}))).expect("the second take answered");
+        // the second contour AND the lens the circles overlap in: apart they would leave the part
+        // in separate pieces - a part is one body, the addition must touch it
+        step(&mut program, "ui.click", serde_json::json!({ "at": [25.0, 10.0] }));
+        step(&mut program, "ui.click", serde_json::json!({ "at": [17.5, 10.0] }));
+        step(&mut program, "ui.key", serde_json::json!({ "key": "enter" }));
+        step(&mut program, "ui.field", serde_json::json!({ "label": "Length", "text": "5" }));
+        step(&mut program, "ui.key", serde_json::json!({ "key": "enter" }));
+        let (extrusions, combines, volume) = read(&mut program, |core| {
+            let d = core.document();
+            (
+                d.features.iter().filter(|f| f.kind == "Extrude").count(),
+                d.features.iter().filter(|f| f.kind == "Combine" && f.error.is_none()).count(),
+                d.bodies.into_iter().filter(|b| !b.consumed && !b.sheet).map(|b| b.volume).sum::<f64>(),
+            )
+        });
+        assert_eq!(
+            (extrusions, combines),
+            (1, 1),
+            "the second extrusion over the picked row did not join the first: {:?}",
+            read(&mut program, |core| {
+                let d = core.document();
+                (d.features.iter().map(|f| (f.kind.clone(), f.name.clone(), f.error.clone())).collect::<Vec<_>>(), d.bodies.iter().map(|b| (b.volume, b.consumed)).collect::<Vec<_>>(), core.status())
+            })
+        );
+        // two circles of r = 10, centres 15 apart, both 5 thick, their union one body
+        let want = (2.0 * std::f64::consts::PI * 100.0 - 45.32) * 5.0;
+        assert!((volume - want).abs() < 30.0, "the joined body holds {volume}, not the {want} of the two circles' union");
+    }
+
     /// A CLICK OF THE FLAT SHEET NEEDS NO OPEN SKETCH: the extrude's bar waits for contours over a
     /// finished sketch - the canvas flat, nothing editing - and the agent's pair [x, y] must reach
     /// it as the person's click does. Reported behaviour: the pair was refused ("no sketch is

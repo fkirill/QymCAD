@@ -2773,6 +2773,7 @@ settings-mcp-copy = Copy
 mcp-the-agent = the agent
 mcp-ui-button = Press a button
 mcp-ui-click = Click a place
+mcp-ui-pick = Pick a row of the tree
 mcp-ui-field = Fill a field
 mcp-ui-menu = Walk a menu
 mcp-ui-key = Press a key
