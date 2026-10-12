@@ -535,6 +535,29 @@ mod tests {
         assert_eq!(document.parts.len(), 2, "the edit lost a part");
     }
 
+    /// A CLICK OF THE MODEL'S SPACE OFF THE 3D VIEW IS REFUSED, NOT FATAL: a sketch's sheet stands
+    /// flat, a place of the space of the model has nothing to name there, and the call says so in
+    /// words; the document stands and the next call is served. Reported behaviour: the click brought
+    /// the program down, whole, from a server call.
+    #[test]
+    fn a_click_of_the_space_off_the_3d_view_is_refused_not_fatal() {
+        let _turn = take_your_turn();
+        let mut program = qymcad::LiveLoop::start();
+        step(&mut program, "ui.key", serde_json::json!({ "key": "escape" }));
+        let new_part = button(&mut program, "tb-new-part-hint");
+        step(&mut program, "ui.button", serde_json::json!({ "hint": new_part }));
+        let pencil = button(&mut program, "g-sketch-pick-hint");
+        step(&mut program, "ui.button", serde_json::json!({ "hint": pencil }));
+        step(&mut program, "ui.click", serde_json::json!({ "at": [0.0, 0.0, 0.0] }));
+        // THE SHEET STANDS FLAT: a triple names a place of the space of the model, and the 3D view is
+        // not the canvas - the call is refused in words naming it, the sketch stands open
+        let answered = crate::checks::ask_the_core(&mut program, move |core| crate::registry::call(core, "ui.click", &serde_json::json!({ "at": [5.0, 3.0, 7.0] }))).expect("the call answered");
+        let crate::registry::TheCall::Refused(words) = answered else { panic!("the click off the 3D view was not refused: {answered:?}") };
+        assert!(words.contains("the canvas is not the 3D view"), "the refusal does not name the canvas: {words}");
+        let open = read(&mut program, |core| core.document().editing.is_some());
+        assert!(open, "the refused click closed the sketch");
+    }
+
     /// WHOSE STEP IS WHOSE in the undo list: every step the agent's calls lay carries the agent's
     /// name, and the person's own steps carry none. The person takes the agent's step back with
     /// their own Ctrl+Z - the marked name moves to redo - and makes a step of their own through

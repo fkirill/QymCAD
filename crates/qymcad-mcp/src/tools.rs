@@ -22,7 +22,8 @@ use crate::TheAgent;
 /// HOW LONG A TOOL WAITS for the program to take its call. A settle of the program is bounded by the
 /// session's own budget; the wait stands above it, so a program whose frames keep running is never cut
 /// short. A program that never takes the call - its window closed, its frames stopped - is said so in
-/// words rather than held forever.
+/// words rather than held forever, and the call is abandoned: a frame that comes later drops it
+/// unread, for a gesture that runs after its moment is not the agent's.
 const THE_WAIT: Duration = Duration::from_secs(150);
 
 /// ONE CALL INTO THE PROGRAM, answered from rest: the work runs on the frame thread over the driving
@@ -33,7 +34,7 @@ pub(crate) fn ask_the_program<T: Send + 'static>(work: impl FnOnce(&mut qymcad::
     let (said, tell) = std::sync::mpsc::channel();
     let (answer, told) = std::sync::mpsc::channel();
     let mut work = Some(work);
-    qymcad::hand_over(
+    let gone = qymcad::hand_over(
         Box::new(move |core| {
             if let Some(work) = work.take() {
                 let _ = said.send(work(core));
@@ -45,7 +46,13 @@ pub(crate) fn ask_the_program<T: Send + 'static>(work: impl FnOnce(&mut qymcad::
     match told.recv_timeout(THE_WAIT) {
         Ok(qymcad::Ended::Done) => tell.recv_timeout(THE_WAIT).map_err(|_| "the program took the call and never said its answer".into()),
         Ok(qymcad::Ended::Asking) => Err("the program is asking the person: a chooser stands open for them, and the agent never answers one".into()),
-        Err(_) => Err("the program never took the call: its frames are not running".into()),
+        Err(_) => {
+            // THE CALL IS ABANDONED, not merely unanswered: a frame that comes later must not run
+            // a gesture whose context has passed - the word is said, and the frame drops the call
+            // unread
+            gone.store(true, std::sync::atomic::Ordering::Relaxed);
+            Err("the program never took the call: its frames are not running".into())
+        }
     }
 }
 

@@ -82,7 +82,10 @@ pub(crate) fn the_place_of(value: &serde_json::Value) -> Option<Place> {
 
 /// CLICK A PLACE - a pair [x, y] of the sheet of the open sketch, or a triple [x, y, z] of the
 /// space of the model, each naming what stands there. A pair with no sketch open is refused in
-/// words: the sheet belongs to an open sketch, and the space of the model is the other form.
+/// words: the sheet belongs to an open sketch, and the space of the model is the other form. A
+/// place that cannot be named - the canvas not the one the form needs, a point off the sheet, a
+/// place hidden or covered on screen - is refused in the words of what stood, and the click never
+/// lands: never fatal, whatever the place ran into.
 fn click_a_place(core: &mut qymcad::AgentSession, _code: &str, given: &serde_json::Value) -> Answered {
     let Some(at) = given.get("at").and_then(the_place_of) else {
         return Answered::Refused("the click needs its place: a pair [x, y] of the sheet of the open sketch, or a triple [x, y, z] of the space of the model".into());
@@ -92,15 +95,39 @@ fn click_a_place(core: &mut qymcad::AgentSession, _code: &str, given: &serde_jso
             if core.document().editing.is_none() {
                 return Answered::Refused("no sketch is open - a place of the sheet needs one; a place of the space of the model goes as [x, y, z]".into());
             }
-            core.click_on_sketch(x, y);
-            Answered::Ran(format!("the place ({}, {}) of the sheet clicked", x, y))
+            let landed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = core.click_on_sketch(x, y);
+            }));
+            match landed {
+                Ok(_) => Answered::Ran(format!("the place ({}, {}) of the sheet clicked", x, y)),
+                Err(caught) => Answered::Refused(the_words_of_the_panic(caught)),
+            }
         }
         Place::Space(p) => {
-            let at = core.in_space(p);
-            core.click(at);
-            Answered::Ran(format!("the place ({}, {}, {}) of the space clicked", p[0], p[1], p[2]))
+            let landed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let at = core.in_space(p);
+                core.click(at);
+            }));
+            match landed {
+                Ok(()) => Answered::Ran(format!("the place ({}, {}, {}) of the space clicked", p[0], p[1], p[2])),
+                Err(caught) => Answered::Refused(the_words_of_the_panic(caught)),
+            }
         }
     }
+}
+
+/// THE WORDS A RAISED REFUSAL CARRIES: the machinery of a place - which canvas stands, what the
+/// point names, what covers it - says what it found by raising, and the words it raised are the
+/// refusal's own; a raising with no words of its own is said so. A gesture that cannot land is
+/// answered, never fatal.
+fn the_words_of_the_panic(caught: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(words) = caught.downcast_ref::<String>() {
+        return words.clone();
+    }
+    if let Some(words) = caught.downcast_ref::<&str>() {
+        return (*words).to_string();
+    }
+    "the gesture could not land, and said no words".to_string()
 }
 
 /// FILL A FIELD by its own caption - the words painted beside it or the grey words it shows while

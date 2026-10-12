@@ -33,12 +33,18 @@ pub enum Ended {
     Asking,
 }
 
-/// ONE CALL OF THE AGENT: the work it asks of the program, and where its answer lands once the work has run.
+/// ONE CALL OF THE AGENT: the work it asks of the program, where its answer lands once the work has
+/// run, and the word of its abandonment - said by whoever asked once it stops waiting, read by the
+/// frame before the work is taken.
 struct Call {
     /// The work, run on the frame thread over the driving core, a slice to a live frame.
     work: Box<Work>,
     /// Told how the work ended: the answer door of whoever asked.
     answer: Sender<Ended>,
+    /// The word of abandonment: said by the asking side when it stops waiting for a frame, read by
+    /// the frame that would have taken the call - which drops it unread instead, for a gesture that
+    /// runs after its moment, out of the context it was called into, is not the agent's.
+    gone: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// A CALL HALF-RUN: the hands its slices share - the agent's own window, the state of its gestures - the
@@ -121,15 +127,19 @@ fn keep_the_wish_current(set: &qymcad_ui_state::McpSettings) {
 }
 
 /// HAND A CALL OF THE AGENT to the frames of the program: it runs on the frame thread, a slice to a live
-/// frame, and its answer comes back from there. The live window is woken for it. The server's door into
-/// the program.
-pub fn hand_over(work: Box<Work>, answer: Sender<Ended>) {
+/// frame, and its answer comes back from there. The live window is woken for it. The word of the call's
+/// abandonment comes back to the asking side, to be said when it stops waiting; a call still only
+/// waiting is then dropped unread by the frame that would have taken it. The server's door into the
+/// program.
+pub fn hand_over(work: Box<Work>, answer: Sender<Ended>) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+    let gone = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     if let Ok(mut waiting) = WAITING.lock() {
-        waiting.push_back(Call { work, answer });
+        waiting.push_back(Call { work, answer, gone: std::sync::Arc::clone(&gone) });
     }
     if let Some(ctx) = WAKE.lock().ok().and_then(|wake| wake.clone()) {
         ctx.request_repaint();
     }
+    gone
 }
 
 /// DOES THE PERSON HOLD THE PROGRAM: a button of theirs down, a field of theirs holding the keyboard, a
@@ -161,7 +171,17 @@ pub(crate) fn pump(app: &mut App, ctx: &egui::Context) {
     let (mut work, answer, settling, mut core) = match RUNNING.lock().ok().and_then(|mut running| running.take()) {
         Some(running) => (running.work, running.answer, running.settling, AgentSession::with_hands(running.hands, app)),
         None => {
-            let Some(call) = WAITING.lock().ok().and_then(|mut waiting| waiting.pop_front()) else { return };
+            // A CALL SAID GONE while it waited - its asking side stopped waiting for a frame that
+            // never came - is dropped unread, one after another, until one that still waits is
+            // found: a gesture that runs after its moment, out of the context it was called into,
+            // is not the agent's. A call half-run is different: its slices are already laid on the
+            // document, and it is finished rather than left between gestures.
+            let call = loop {
+                let Some(call) = WAITING.lock().ok().and_then(|mut waiting| waiting.pop_front()) else { return };
+                if !call.gone.load(std::sync::atomic::Ordering::Relaxed) {
+                    break call;
+                }
+            };
             // THE WINDOW THE AGENT'S LAST CALL LEFT, when there is one: its focus and its scrolls
             // are what a person's window keeps between two gestures
             let hands = THE_HANDS.lock().ok().and_then(|mut kept| kept.take());
@@ -244,7 +264,11 @@ mod tests {
         let _turn = take_your_turn();
         let mut app = App::default();
         let (answer, told) = std::sync::mpsc::channel();
-        WAITING.lock().expect("the queue of the agent's calls is not poisoned").push_back(Call { work: Box::new(|_| true), answer });
+        WAITING.lock().expect("the queue of the agent's calls is not poisoned").push_back(Call {
+            work: Box::new(|_| true),
+            answer,
+            gone: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        });
         pump(&mut app, &egui::Context::default());
         assert!(matches!(the_frames_answer_the_call(&mut app, &egui::Context::default(), &told), Ended::Done), "the call was not answered as done");
         assert!(WAITING.lock().expect("the queue of the agent's calls is not poisoned").is_empty(), "the call was left waiting");
@@ -269,13 +293,45 @@ mod tests {
         let ctx = egui::Context::default();
         the_person_s_button(true, &ctx);
         let (answer, told) = std::sync::mpsc::channel();
-        WAITING.lock().expect("the queue of the agent's calls is not poisoned").push_back(Call { work: Box::new(|_| true), answer });
+        WAITING.lock().expect("the queue of the agent's calls is not poisoned").push_back(Call {
+            work: Box::new(|_| true),
+            answer,
+            gone: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        });
         pump(&mut app, &ctx);
         assert!(told.try_recv().is_err(), "the agent's call ran while the person was mid-drag");
         assert!(!WAITING.lock().expect("the queue of the agent's calls is not poisoned").is_empty(), "the call was dropped instead of waiting out the drag");
         the_person_s_button(false, &ctx);
         assert!(matches!(the_frames_answer_the_call(&mut app, &ctx, &told), Ended::Done), "the call did not resume once the person let go");
         assert!(WAITING.lock().expect("the queue of the agent's calls is not poisoned").is_empty(), "the call was left waiting after the release");
+    }
+
+    /// A CALL ABANDONED WHILE IT WAITED NEVER RUNS: the asking side stops waiting - the frames never
+    /// came - and says the word of abandonment; the frame that comes later drops the call unread
+    /// instead of running a gesture out of the context it was called into.
+    #[test]
+    fn a_call_abandoned_while_it_waited_never_runs() {
+        let _turn = take_your_turn();
+        let mut app = App::default();
+        let ctx = egui::Context::default();
+        let ran = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (answer, told) = std::sync::mpsc::channel();
+        let gone = {
+            let ran = std::sync::Arc::clone(&ran);
+            hand_over(
+                Box::new(move |_: &mut AgentSession| {
+                    ran.store(true, std::sync::atomic::Ordering::Relaxed);
+                    true
+                }),
+                answer,
+            )
+        };
+        gone.store(true, std::sync::atomic::Ordering::Relaxed);
+        pump(&mut app, &ctx);
+        assert!(!ran.load(std::sync::atomic::Ordering::Relaxed), "the abandoned call ran");
+        assert!(WAITING.lock().expect("the queue of the agent's calls is not poisoned").is_empty(), "the abandoned call was left waiting");
+        assert!(told.try_recv().is_err(), "the abandoned call was answered");
+        assert!(RUNNING.lock().expect("the call in the frame is not held by a poisoned lock").is_none(), "the abandoned call was taken into the frame");
     }
 
     /// THE AGENT NEVER ANSWERS A CHOOSER: its gesture raised one - File, Save as - and the call is answered
