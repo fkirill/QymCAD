@@ -70,7 +70,8 @@ struct SearchToolParams {
     /// The words to find the operation by: a part of its code, or of its name in any language the program
     /// speaks.
     query: String,
-    /// Only operations of this workbench - `sketch`, `part`, `assembly`; every workbench when left out.
+    /// Only operations of this workbench - `sketch`, `part`, `assembly`, `general` (the view, the file, the
+    /// parameters of the whole program); every workbench when left out.
     workbench: Option<String>,
 }
 
@@ -176,7 +177,7 @@ impl TheAgent {
         };
         let found: Vec<serde_json::Value> = crate::registry::the_hits(&query, workbench.as_deref(), &now_in)
             .into_iter()
-            .map(|e| serde_json::json!({ "code": e.command.code, "names": e.names(), "synopsis": e.synopsis(), "workbench": e.command.workbench }))
+            .map(|e| serde_json::json!({ "code": e.code(), "names": e.names(), "synopsis": e.synopsis(), "workbench": e.workbench() }))
             .collect();
         if found.is_empty() {
             return Ok(CallToolResult::success(vec![ContentBlock::text(format!(
@@ -190,14 +191,14 @@ impl TheAgent {
     /// did not work - the same article F1 opens, with its title and its place on the web.
     #[tool(name = "read-tool-help", description = "The help article of an operation, by its code: what to press, what happens, and what to do if it did not work")]
     fn read_tool_help(&self, Parameters(ReadToolHelpParams { name }): Parameters<ReadToolHelpParams>) -> Result<CallToolResult, rmcp::ErrorData> {
-        let Some(command) = qymcad::COMMANDS.iter().find(|c| c.code == name) else {
+        let Some(entry) = crate::registry::by_code(&name) else {
             return Ok(no_such_operation(&name));
         };
-        let Some(article) = command.help_article() else {
-            return Ok(CallToolResult::success(vec![ContentBlock::text(format!("{} ({}) has no help article of its own", command.name(), command.code))]));
+        let Some(article) = entry.help_article() else {
+            return Ok(CallToolResult::success(vec![ContentBlock::text(format!("{} ({}) has no help article of its own", entry.name(), entry.code()))]));
         };
         Ok(CallToolResult::success(vec![ContentBlock::json(serde_json::json!({
-            "code": command.code,
+            "code": entry.code(),
             "title": qymcad_help::title(article),
             "url": qymcad_help::web_url(article),
             "article": qymcad_help::article(article).unwrap_or_default(),
@@ -235,7 +236,7 @@ impl TheAgent {
         let Some(entry) = crate::registry::by_code(&name) else {
             return Ok(no_such_operation(&name));
         };
-        let code = entry.command.code;
+        let code = entry.code();
         Ok(match the_program_answers(move |core| crate::registry::parameters(core, code)).await {
             Ok(fields) => {
                 CallToolResult::success(vec![ContentBlock::json(serde_json::to_value(&fields).expect("the fields are plain data and serialize")).expect("the fields are plain data and serialize")])

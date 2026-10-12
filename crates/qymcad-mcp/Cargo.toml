@@ -20,6 +20,14 @@ publish = false
 qymcad = { path = "../qymcad" }
 # THE PROGRAM'S OWN HELP, the toolset reads it: the same articles F1 opens, named by the command catalogue.
 qymcad-help = { path = "../qymcad-help" }
+# THE PROGRAM'S OWN DICTIONARY, the operations of the whole program are named by it: a menu item of
+# their own, a bar button - the same words the window shows, read so the agent's names cannot drift
+# from the person's.
+qymcad-i18n = { path = "../qymcad-i18n" }
+# THE FORMATS THE FILE OPERATIONS NAME, from the tables where the program itself holds them: the exact
+# formats of the kernel, the mesh formats of the state - the same enums the session's doors take.
+qymcad-kernel = { path = "../qymcad-kernel" }
+qymcad-ui-state = { path = "../qymcad-ui-state" }
 rmcp = { version = "3.5.1", features = ["transport-streamable-http-server"] }
 axum = "0.8"
 tokio = { version = "1", features = ["rt", "time", "net"] }

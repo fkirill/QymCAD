@@ -112,13 +112,7 @@ impl App {
             Launch::Dim(n) => qymcad_ui_state::set_dim_tool(&mut qymcad_ui_state::tools_of!(self), &mut self.viewing.mode_3d, &self.project, self.chosen.sel, self.sketch_ses, &mut self.status, n),
             Launch::ClickOp(n) => qymcad_ui_state::set_click_op(&mut qymcad_ui_state::tools_of!(self), &mut self.viewing.mode_3d, n),
             Launch::Modify(n) => qymcad_ui_state::modify_button(qymcad_ui_state::editing_of!(self), &mut qymcad_ui_state::tools_of!(self), self.sk_pat, &self.tool_prefs, n),
-            Launch::Action("joint") => self.start_joint_pick(),
-            Launch::Action("ground") => self.start_ground_pick(),
-            Launch::Action("group") => self.start_group_pick(),
-            Launch::Action("width") => self.start_width_pick(),
-            Launch::Action("tangent") => self.start_tangent_pick(),
-            Launch::Action("relation") => self.start_relation_pick(),
-            Launch::Action(a) => crate::gui::piece_part::from_search(frame, &mut self.part_ctx(), a),
+            Launch::Action(a) => launch_an_action(self, frame, a),
         }
     }
 
@@ -169,5 +163,23 @@ impl App {
         // reached for, and everything after it is the assembly's own work.
         let Some((body, _)) = self.pick_part_face_at(rect, from) else { return false };
         joint_grab_part(&mut self.joint_ctx(), body, rect, towards, basis)
+    }
+}
+
+/// LAUNCH AN ACTION COMMAND - the ones the bars arm with no number of their own: the mates of the
+/// assembly, a piece made a part, the measure of the 3D view, the section of the view. Each arm calls
+/// the one door its own button calls, exactly as the numbered launches do; a second path would start
+/// doing what the button does not.
+fn launch_an_action(app: &mut App, frame: &egui::Context, action: &str) {
+    match action {
+        "joint" => app.start_joint_pick(),
+        "ground" => app.start_ground_pick(),
+        "group" => app.start_group_pick(),
+        "width" => app.start_width_pick(),
+        "tangent" => app.start_tangent_pick(),
+        "relation" => app.start_relation_pick(),
+        "measure" => app.toggle_measure_3d(),
+        "section" => app.toggle_section(),
+        a => crate::gui::piece_part::from_search(frame, &mut app.part_ctx(), a),
     }
 }

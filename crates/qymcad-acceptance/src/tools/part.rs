@@ -1430,7 +1430,7 @@ pub static MEASURE_3D: Tool = Tool {
     id: "part.measure-3d",
     flow: Flow::Command,
     title: "hotkey-part-i",
-    entries: &[Entry::Button("tb-measure3d-hint")],
+    entries: &[Entry::Button("tb-measure3d-hint"), Entry::Search("hotkey-part-i")],
     other: (Entry::Button("tb-mirror-body-hint"), "cmd-mirror"),
     fixture: Fixture::Block,
     picks: &[Pick::Vertex([0.0, 0.0, 10.0]), Pick::Vertex([40.0, 0.0, 10.0])],

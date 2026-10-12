@@ -116,6 +116,10 @@ pub const COMMANDS: &[Command] = &[
     Command { code: "part.cone", workbench: "part", launch: Launch::Prim(13), name_key: "cmdname-cone" },
     Command { code: "part.torus", workbench: "part", launch: Launch::Prim(14), name_key: "cmdname-torus" },
     Command { code: "part.prism", workbench: "part", launch: Launch::Prim(15), name_key: "cmdname-prism" },
+    // THE MEASURE OF THE 3D VIEW: a button of the Part bar that launches no numbered command. It takes
+    // the word of its hotkey (the sketch ruler is the plain "Measure"), for its article is shared with
+    // the ruler's topic
+    Command { code: "part.measure", workbench: "part", launch: Launch::Action("measure"), name_key: "hotkey-part-i" },
     // ── Assembly ────────────────────────────────────────────────────────────────────────────
     Command { code: "assembly.joint", workbench: "assembly", launch: Launch::Action("joint"), name_key: "" },
     Command { code: "assembly.ground", workbench: "assembly", launch: Launch::Action("ground"), name_key: "cmdname-ground" },
@@ -126,6 +130,9 @@ pub const COMMANDS: &[Command] = &[
     Command { code: "assembly.width", workbench: "assembly", launch: Launch::Action("width"), name_key: "j-width-made" },
     Command { code: "assembly.tangent", workbench: "assembly", launch: Launch::Action("tangent"), name_key: "j-tangent-made" },
     Command { code: "assembly.relation", workbench: "assembly", launch: Launch::Action("relation"), name_key: "j-relation-made" },
+    // the section of the view, a button of both the Part and the Assembly bar; the article is the
+    // viewport's own, so the word of the section bar names the row
+    Command { code: "assembly.section", workbench: "assembly", launch: Launch::Action("section"), name_key: "sec-btn" },
     // one of the several bodies a part shows made a part of its own; the right button on it does the same
     Command { code: "part.piece-to-part", workbench: "part", launch: Launch::Action("piece"), name_key: "act-piece-to-part" },
 ];
@@ -176,6 +183,10 @@ impl Command {
             Launch::Action("width") => crate::help_map::assembly_article("asm.width"),
             Launch::Action("tangent") => crate::help_map::assembly_article("asm.tangent"),
             Launch::Action("relation") => crate::help_map::assembly_article("asm.relation"),
+            // the two bar buttons that answer by articles of the general section: the measure of the
+            // 3D view, and the section of the view itself
+            Launch::Action("measure") => Some("general/11-measure"),
+            Launch::Action("section") => Some("general/09-viewport"),
             Launch::Action("piece") => Some("part/13-split-body"),
             Launch::Action(_) => None,
         }

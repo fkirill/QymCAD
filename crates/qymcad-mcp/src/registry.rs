@@ -1,14 +1,15 @@
-//! THE REGISTRY OF OPERATIONS the agent calls by name: every command of the program's catalogue, derived
-//! from it - never written beside it. A command the panel offers cannot be missing from the agent's reach,
-//! and a row the catalogue never held cannot appear in it; the guard in this module's checks holds that
-//! link in both directions.
+//! THE REGISTRY OF OPERATIONS the agent calls by name: every command of the program's catalogue,
+//! derived from it - never written beside it - and beside them the operations of the whole program
+//! (the view, the file, the table of parameters), derived from the help articles that name them. A
+//! command the panel offers cannot be missing from the agent's reach, and a row the catalogue never
+//! held cannot appear in it; the guard in this module's checks holds that link in both directions.
 //!
 //! Each entry carries what a client needs to find and call an operation: its code, its names in each
 //! language the program speaks, a one-line synopsis from its help article, its workbench, the words it is
 //! also found by, and its run - the gestures a person would make through the same interface. The names and
-//! the synopsis are read through the catalogue and the help articles as they stand, so they cannot drift
-//! from what the window shows; only the synonyms are the registry's own words, for neither the catalogue
-//! nor the help holds any.
+//! the synopsis are read through the catalogue, the dictionary and the help articles as they stand, so
+//! they cannot drift from what the window shows; only the synonyms are the registry's own words, for
+//! neither the catalogue nor the help holds any.
 
 /// HOW AN OPERATION RUNS: its gestures over the agent's session - the strokes a person makes through the
 /// same interface - told its own code and the parameters the call carried.
@@ -46,18 +47,18 @@ pub(crate) fn call(core: &mut qymcad::AgentSession, name: &str, given: &serde_js
     let Some(entry) = by_code(name) else {
         return TheCall::Refused(format!("{name}: no operation of the program is named so; search-tool finds what the program offers"));
     };
-    let fields = parameters(core, entry.command.code);
+    let fields = parameters(core, entry.code());
     if let Err(words) = checked_against(given, &fields, entry.takes) {
         return TheCall::Refused(words);
     }
     let Some(the_run) = entry.run else {
         return TheCall::Refused(format!(
             "{} ({}) is a command of the program, and the agent serves no operation for it; read-tool-help tells what it does, search-tool finds what the program offers",
-            entry.command.name(),
-            entry.command.code
+            entry.name(),
+            entry.code()
         ));
     };
-    let answered = the_run(core, entry.command.code, given);
+    let answered = the_run(core, entry.code(), given);
     let status = core.status();
     match answered {
         Answered::Ran(outcome) => TheCall::Answered { status, problems: core.the_standing_problems(), outcome },
@@ -133,13 +134,16 @@ const SYNONYMS: &[(&str, &[&str])] = &[
     ("assembly.tangent", &["touch"]),
     ("assembly.width", &["midway"]),
     ("assembly.relation", &["gear", "rack", "screw", "linear"]),
+    ("part.measure", &["distance", "angle", "diameter", "ruler"]),
+    ("assembly.section", &["cut", "clip", "half"]),
 ];
 
 /// ONE OPERATION OF THE PROGRAM, as the agent calls it by name.
 pub(crate) struct Entry {
-    /// THE CATALOGUE ROW the entry is derived from: the code, the workbench, the launch - the one source
-    /// the command search and the panel read.
-    pub(crate) command: &'static qymcad::Command,
+    /// WHAT THE OPERATION ANSWERS BY: the command of the catalogue it is derived from, or - for the
+    /// operations of the whole program, which no workbench owns and no command of the catalogue
+    /// launches - its own code and the article of the help that names it.
+    pub(crate) by: By,
     /// The words the operation is also found by.
     pub(crate) synonyms: &'static [&'static str],
     /// ITS RUN over the agent's session; `None` where none is wired yet, and a call of the entry answers
@@ -149,17 +153,81 @@ pub(crate) struct Entry {
     pub(crate) takes: &'static [Take],
 }
 
+/// WHAT AN OPERATION ANSWERS BY.
+pub(crate) enum By {
+    /// A command of the catalogue: the entry is derived from its row - the code, the workbench, the
+    /// names in each language, the article F1 opens.
+    Command(&'static qymcad::Command),
+    /// AN OPERATION OF THE WHOLE PROGRAM - the view, the file, the table of parameters: called by its
+    /// own code (`area.name`, the catalogue's own style), named in each language by the word of the
+    /// dictionary its own surface carries (a menu item, a bar button), answered by its help article,
+    /// living in no workbench (`general`).
+    OfTheProgram { code: &'static str, article: &'static str, name_key: &'static str },
+}
+
 impl Entry {
-    /// THE NAMES OF THE OPERATION, one in each language the program speaks, as the catalogue takes them:
-    /// the word of its own a command has one, the title of its help article otherwise.
+    /// THE CODE the operation is called by: its command's own where there is one.
+    pub(crate) fn code(&self) -> &'static str {
+        match &self.by {
+            By::Command(command) => command.code,
+            By::OfTheProgram { code, .. } => code,
+        }
+    }
+
+    /// THE WORKBENCH the operation lives in, for the search's ranking and its filter: `general` for
+    /// the operations of the whole program, which no workbench owns and none of them ranks first.
+    pub(crate) fn workbench(&self) -> &'static str {
+        match &self.by {
+            By::Command(command) => command.workbench,
+            By::OfTheProgram { .. } => "general",
+        }
+    }
+
+    /// THE COMMAND OF THE CATALOGUE the entry answers by, where it is one. The runs that take a
+    /// command through the search work over these alone; an operation of the whole program is taken
+    /// by no command and works its own gestures.
+    pub(crate) fn the_command(&self) -> Option<&'static qymcad::Command> {
+        match &self.by {
+            By::Command(command) => Some(command),
+            By::OfTheProgram { .. } => None,
+        }
+    }
+
+    /// THE NAME of the operation in the language the program speaks now.
+    pub(crate) fn name(&self) -> String {
+        match &self.by {
+            By::Command(command) => command.name(),
+            By::OfTheProgram { name_key, .. } => qymcad_i18n::tr(name_key),
+        }
+    }
+
+    /// THE NAME IN A PARTICULAR LANGUAGE, as the catalogue takes it.
+    pub(crate) fn name_in(&self, lang: &str) -> String {
+        match &self.by {
+            By::Command(command) => command.name_in(lang),
+            By::OfTheProgram { name_key, .. } => qymcad_i18n::tr_in(lang, name_key).unwrap_or_default(),
+        }
+    }
+
+    /// THE HELP ARTICLE the operation answers by.
+    pub(crate) fn help_article(&self) -> Option<&'static str> {
+        match &self.by {
+            By::Command(command) => command.help_article(),
+            By::OfTheProgram { article, .. } => Some(article),
+        }
+    }
+
+    /// THE NAMES OF THE OPERATION, one in each language the program speaks: the word of its own a
+    /// command has one, the title of its article otherwise.
     pub(crate) fn names(&self) -> std::collections::BTreeMap<String, String> {
-        qymcad_help::languages().into_iter().map(|l| (l.clone(), self.command.name_in(&l))).collect()
+        qymcad_help::languages().into_iter().map(|l| (l.clone(), self.name_in(&l))).collect()
     }
 
     /// THE ONE-LINE SYNOPSIS: the caption of the first picture of the help article, which says in one
-    /// sentence what the operation is; the command's own name where the article carries no such picture.
+    /// sentence what the operation is; the operation's own name where the article carries no such
+    /// picture.
     pub(crate) fn synopsis(&self) -> String {
-        let caption = self.command.help_article().and_then(qymcad_help::article).and_then(|md| {
+        let caption = self.help_article().and_then(qymcad_help::article).and_then(|md| {
             qymcad_help::parse(md).into_iter().find_map(|b| match b {
                 qymcad_help::Block::Image { alt, .. } => Some(alt),
                 _ => None,
@@ -167,7 +235,7 @@ impl Entry {
         });
         match caption {
             Some(alt) if !alt.is_empty() => alt.iter().map(|s| s.text.as_str()).collect(),
-            _ => self.command.name(),
+            _ => self.name(),
         }
     }
 }
@@ -196,24 +264,30 @@ pub(crate) struct Wired {
     pub(crate) takes: &'static [Take],
 }
 
-/// THE REGISTRY, derived from the command catalogue: every command of the program, in the panel's order.
-/// Every entry is wired to a run - the take itself where no richer run is - so no command of the
-/// catalogue can stand outside the agent's reach; the guard below fails the day one does.
+/// THE REGISTRY, derived from the command catalogue and the help: every command of the program, in the
+/// panel's order, and beside them the operations of the whole program - the view, the file, the table
+/// of parameters - which no workbench owns. Every entry is wired to a run - the take itself where no
+/// richer run is - so nothing the program offers can stand outside the agent's reach; the guard below
+/// fails the day something does.
 pub(crate) fn the_registry() -> &'static [Entry] {
     static THE_REGISTRY: std::sync::OnceLock<Vec<Entry>> = std::sync::OnceLock::new();
     THE_REGISTRY.get_or_init(|| {
-        qymcad::COMMANDS
-            .iter()
-            .map(|command| {
-                let wired = RICHER_RUNS.iter().find(|w| w.code == command.code);
-                Entry {
-                    command,
-                    synonyms: SYNONYMS.iter().find(|(code, _)| *code == command.code).map(|(_, words)| *words).unwrap_or(&[]),
-                    run: wired.map(|w| w.run).or(Some(the_take)),
-                    takes: wired.map(|w| w.takes).unwrap_or(&[]),
-                }
-            })
-            .collect()
+        let of_commands = qymcad::COMMANDS.iter().map(|command| {
+            let wired = RICHER_RUNS.iter().find(|w| w.code == command.code);
+            Entry {
+                by: By::Command(command),
+                synonyms: SYNONYMS.iter().find(|(code, _)| *code == command.code).map(|(_, words)| *words).unwrap_or(&[]),
+                run: wired.map(|w| w.run).or(Some(the_take)),
+                takes: wired.map(|w| w.takes).unwrap_or(&[]),
+            }
+        });
+        let of_the_program = crate::general::THE_OPERATIONS_OF_THE_PROGRAM.iter().map(|o| Entry {
+            by: By::OfTheProgram { code: o.code, article: o.article, name_key: o.name_key },
+            synonyms: o.synonyms,
+            run: Some(o.run),
+            takes: o.takes,
+        });
+        of_commands.chain(of_the_program).collect()
     })
 }
 
@@ -285,6 +359,8 @@ const RICHER_RUNS: &[Wired] = &[
     Wired { code: "assembly.tangent", run: rest_a_shaft_on_the_face, takes: &[Take { name: "picks", kind: "picks" }] },
     Wired { code: "assembly.width", run: sit_the_part_between_the_walls, takes: &[Take { name: "picks", kind: "picks" }] },
     Wired { code: "assembly.relation", run: tie_the_mates_together, takes: &[Take { name: "joints", kind: "joints" }] },
+    Wired { code: "part.measure", run: measure_between_the_picks, takes: &[Take { name: "picks", kind: "picks" }] },
+    Wired { code: "assembly.section", run: cut_the_view_by_a_plane, takes: &[Take { name: "picks", kind: "picks" }] },
 ];
 
 /// DRAW A CHAIN OF LINES: the tool taken, every place of the sheet clicked in turn, the chain ended as a
@@ -294,7 +370,7 @@ fn draw_a_chain(core: &mut qymcad::AgentSession, code: &str, given: &serde_json:
     let Some(entry) = by_code(code) else { return Answered::Refused(format!("{code}: no operation of the program is named so")) };
     let Some(places) = the_places(given) else { return Answered::Refused("the line needs its places on the sheet, two at least".into()) };
     let Some(sketch) = the_open_sketch(core) else { return Answered::Refused("no sketch is open to draw in - open one and draw again".to_string()) };
-    take_the_command(core, entry.command);
+    take_the_command(core, the_command_of(entry));
     for (x, y) in &places {
         core.click_on_sketch(*x, *y);
     }
@@ -314,7 +390,7 @@ fn draw_a_circle(core: &mut qymcad::AgentSession, code: &str, given: &serde_json
     let Some(places) = the_places(given) else { return Answered::Refused("the circle needs its places on the sheet: the centre, then the rim".into()) };
     let [centre, rim, ..] = places.as_slice() else { return Answered::Refused("the circle needs two places: the centre, then the rim".into()) };
     let Some(sketch) = the_open_sketch(core) else { return Answered::Refused("no sketch is open to draw in - open one and draw again".to_string()) };
-    take_the_command(core, entry.command);
+    take_the_command(core, the_command_of(entry));
     core.click_on_sketch(centre.0, centre.1);
     core.click_on_sketch(rim.0, rim.1);
     core.key(qymcad::Key::Escape);
@@ -333,7 +409,7 @@ fn draw_a_rectangle(core: &mut qymcad::AgentSession, code: &str, given: &serde_j
     let Some(places) = the_places(given) else { return Answered::Refused("the rectangle needs its places on the sheet: the anchor, then the corner".into()) };
     let [anchor, corner, ..] = places.as_slice() else { return Answered::Refused("the rectangle needs two places: the anchor, then the corner".into()) };
     let Some(sketch) = the_open_sketch(core) else { return Answered::Refused("no sketch is open to draw in - open one and draw again".to_string()) };
-    take_the_command(core, entry.command);
+    take_the_command(core, the_command_of(entry));
     core.click_on_sketch(anchor.0, anchor.1);
     core.click_on_sketch(corner.0, corner.1);
     core.key(qymcad::Key::Escape);
@@ -364,16 +440,16 @@ fn things(s: &qymcad::SketchInfo) -> usize {
 /// call than before.
 fn draw_by_clicks(core: &mut qymcad::AgentSession, code: &str, given: &serde_json::Value) -> Answered {
     let Some(entry) = by_code(code) else { return Answered::Refused(format!("{code}: no operation of the program is named so")) };
-    let Some(places) = the_places(given) else { return Answered::Refused(format!("the {} needs its places on the sheet", entry.command.name())) };
+    let Some(places) = the_places(given) else { return Answered::Refused(format!("the {} needs its places on the sheet", entry.name())) };
     let Some(sketch) = the_open_sketch(core) else { return Answered::Refused("no sketch is open to draw in - open one and draw again".to_string()) };
-    take_the_command(core, entry.command);
+    take_the_command(core, the_command_of(entry));
     fill_the_fields(core, given);
     for (x, y) in &places {
         core.click_on_sketch(*x, *y);
     }
     core.key(qymcad::Key::Escape);
     match the_open_sketch(core) {
-        Some(after) if after.name == sketch.name && things(&after) > things(&sketch) => Answered::Ran(format!("{} drawn of {} places of {}", entry.command.name(), places.len(), sketch.name)),
+        Some(after) if after.name == sketch.name && things(&after) > things(&sketch) => Answered::Ran(format!("{} drawn of {} places of {}", entry.name(), places.len(), sketch.name)),
         _ => Answered::Refused(format!("nothing was drawn: {}", core.status())),
     }
 }
@@ -385,7 +461,7 @@ fn draw_a_spline(core: &mut qymcad::AgentSession, code: &str, given: &serde_json
     let Some(places) = the_places(given) else { return Answered::Refused("the spline needs its places on the sheet, two at least".into()) };
     let Some((last, nodes)) = places.split_last() else { return Answered::Refused("the spline needs its places on the sheet, two at least".into()) };
     let Some(sketch) = the_open_sketch(core) else { return Answered::Refused("no sketch is open to draw in - open one and draw again".to_string()) };
-    take_the_command(core, entry.command);
+    take_the_command(core, the_command_of(entry));
     for (x, y) in nodes {
         core.click_on_sketch(*x, *y);
     }
@@ -406,7 +482,7 @@ fn write_a_text(core: &mut qymcad::AgentSession, code: &str, given: &serde_json:
     let Some((at, _)) = places.split_first() else { return Answered::Refused("the text needs its place on the sheet".into()) };
     let words = given.get("text").and_then(|t| t.as_str()).unwrap_or_default().to_string();
     let Some(sketch) = the_open_sketch(core) else { return Answered::Refused("no sketch is open to draw in - open one and draw again".to_string()) };
-    take_the_command(core, entry.command);
+    take_the_command(core, the_command_of(entry));
     fill_the_fields(core, given);
     let caption = core.word("tool-text");
     let writing = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -440,7 +516,7 @@ fn place_a_dimension(core: &mut qymcad::AgentSession, code: &str, given: &serde_
         "sketch.dim-radius" => "Diameter",
         _ => "Distance",
     };
-    take_the_command(core, entry.command);
+    take_the_command(core, the_command_of(entry));
     for (x, y) in &places {
         core.click_on_sketch(*x, *y);
     }
@@ -463,7 +539,7 @@ fn trim_the_segments(core: &mut qymcad::AgentSession, code: &str, given: &serde_
     let Some(entry) = by_code(code) else { return Answered::Refused(format!("{code}: no operation of the program is named so")) };
     let Some(places) = the_places(given) else { return Answered::Refused("the trim needs its places on the sheet: a place on each segment to cut".into()) };
     let Some(sketch) = the_open_sketch(core) else { return Answered::Refused("no sketch is open to trim in - open one and trim again".to_string()) };
-    take_the_command(core, entry.command);
+    take_the_command(core, the_command_of(entry));
     for (x, y) in &places {
         core.click_on_sketch(*x, *y);
     }
@@ -496,7 +572,7 @@ fn extend_a_line(core: &mut qymcad::AgentSession, code: &str, given: &serde_json
     let arrow = core.word("tb-select-hint");
     core.press_hint(&arrow);
     core.click_on_sketch(on.0, on.1);
-    take_the_command(core, entry.command);
+    take_the_command(core, the_command_of(entry));
     let at = core.on_sketch(to.0, to.1);
     core.move_to(at);
     core.key(qymcad::Key::Enter);
@@ -517,7 +593,7 @@ fn break_a_line(core: &mut qymcad::AgentSession, code: &str, given: &serde_json:
     let Some(places) = the_places(given) else { return Answered::Refused("the break needs its place on the sheet: where the line is to split".into()) };
     let [at, ..] = places.as_slice() else { return Answered::Refused("the break needs its place on the sheet: where the line is to split".into()) };
     let Some(sketch) = the_open_sketch(core) else { return Answered::Refused("no sketch is open to break in - open one and break again".to_string()) };
-    take_the_command(core, entry.command);
+    take_the_command(core, the_command_of(entry));
     core.click_on_sketch(at.0, at.1);
     core.key(qymcad::Key::Escape);
     match the_open_sketch(core) {
@@ -534,7 +610,7 @@ fn project_the_edges(core: &mut qymcad::AgentSession, code: &str, given: &serde_
     let Some(entry) = by_code(code) else { return Answered::Refused(format!("{code}: no operation of the program is named so")) };
     let Some(places) = the_places(given) else { return Answered::Refused("the projection needs its places on the sheet: a place on each edge to take".into()) };
     let Some(sketch) = the_open_sketch(core) else { return Answered::Refused("no sketch is open to project into - open one and project again".to_string()) };
-    take_the_command(core, entry.command);
+    take_the_command(core, the_command_of(entry));
     for (x, y) in &places {
         core.click_on_sketch(*x, *y);
     }
@@ -555,7 +631,7 @@ fn cut_the_corner(core: &mut qymcad::AgentSession, code: &str, given: &serde_jso
     let (field, bevel) = if code == "sketch.corner-chamfer" { ("size", code == "sketch.corner-chamfer") } else { ("radius", false) };
     let Some(size) = the_words_of(given, field) else { return Answered::Refused(format!("the corner needs the {field} it is cut to")) };
     let Some(sketch) = the_open_sketch(core) else { return Answered::Refused("no sketch is open to cut a corner in - open one and cut again".to_string()) };
-    take_the_command(core, entry.command);
+    take_the_command(core, the_command_of(entry));
     for (x, y) in &places {
         let at = core.on_sketch(*x, *y);
         core.click_with(at, qymcad::PointerButton::Primary, qymcad::Modifiers::SHIFT);
@@ -579,7 +655,7 @@ fn delete_the_selection(core: &mut qymcad::AgentSession, code: &str, given: &ser
     let Some(sketch) = the_open_sketch(core) else { return Answered::Refused("no sketch is open to delete in - open one and delete again".to_string()) };
     take_the_arrow(core);
     pick_the_places(core, &places);
-    take_the_command(core, entry.command);
+    take_the_command(core, the_command_of(entry));
     match the_open_sketch(core) {
         Some(after) if after.name == sketch.name && things(&after) < things(&sketch) => Answered::Ran(format!("{} place(s) deleted of {}", places.len(), sketch.name)),
         _ => Answered::Refused(format!("nothing was deleted: {}", core.status())),
@@ -601,7 +677,7 @@ fn reflect_the_selection(core: &mut qymcad::AgentSession, code: &str, given: &se
     let Some(sketch) = the_open_sketch(core) else { return Answered::Refused("no sketch is open to mirror in - open one and mirror again".to_string()) };
     take_the_arrow(core);
     pick_the_places(core, what);
-    take_the_command(core, entry.command);
+    take_the_command(core, the_command_of(entry));
     core.click_on_sketch(axis.0, axis.1);
     core.key(qymcad::Key::Escape);
     match the_open_sketch(core) {
@@ -626,7 +702,7 @@ fn lay_an_offset(core: &mut qymcad::AgentSession, code: &str, given: &serde_json
     let Some(sketch) = the_open_sketch(core) else { return Answered::Refused("no sketch is open to offset in - open one and offset again".to_string()) };
     take_the_arrow(core);
     pick_the_places(core, chain);
-    take_the_command(core, entry.command);
+    take_the_command(core, the_command_of(entry));
     core.click_on_sketch(side.0, side.1);
     core.type_text(&distance);
     core.key(qymcad::Key::Enter);
@@ -647,7 +723,7 @@ fn work_a_contour(core: &mut qymcad::AgentSession, code: &str, given: &serde_jso
     let kind = if code == "part.revolve" { "Revolve" } else { "Extrude" };
     let before = core.document();
     let (bodies_before, nodes_before) = (before.bodies.len(), before.features.iter().filter(|f| f.kind == kind).count());
-    take_the_command(core, entry.command);
+    take_the_command(core, the_command_of(entry));
     fill_the_fields(core, given);
     core.key(qymcad::Key::Enter);
     core.key(qymcad::Key::Enter);
@@ -678,16 +754,14 @@ fn make_a_primitive(core: &mut qymcad::AgentSession, code: &str, given: &serde_j
     let before = core.document();
     let bodies_before = before.bodies.len();
     let nodes_before = before.features.iter().filter(|f| f.kind == kind).count();
-    take_the_command(core, entry.command);
+    take_the_command(core, the_command_of(entry));
     fill_the_fields(core, given);
     core.key(qymcad::Key::Enter);
     let document = core.document();
     let made = document.features.iter().filter(|f| f.kind == kind && !f.suppressed).rfind(|f| f.error.is_none());
     match (document.bodies.len() > bodies_before || document.features.iter().filter(|f| f.kind == kind).count() > nodes_before, made) {
-        (true, Some(node)) if !document.bodies.is_empty() && document.bodies.iter().any(|b| b.volume > 0.0) => {
-            Answered::Ran(format!("a {} made ({}), its body in the part", entry.command.name(), node.name))
-        }
-        (_, Some(node)) => Answered::Refused(format!("the {} would not build: {}", entry.command.name(), node.error.clone().unwrap_or_default())),
+        (true, Some(node)) if !document.bodies.is_empty() && document.bodies.iter().any(|b| b.volume > 0.0) => Answered::Ran(format!("a {} made ({}), its body in the part", entry.name(), node.name)),
+        (_, Some(node)) => Answered::Refused(format!("the {} would not build: {}", entry.name(), node.error.clone().unwrap_or_default())),
         _ => Answered::Refused(format!("nothing was made: {}", core.status())),
     }
 }
@@ -728,11 +802,11 @@ fn work_on_the_body(core: &mut qymcad::AgentSession, code: &str, given: &serde_j
         _ => "Fillet",
     };
     let Some(picks) = the_triples(given.get("picks")) else {
-        return Answered::Refused(format!("the {} needs its places in the space of the model: a place on each edge or face it works on", entry.command.name()));
+        return Answered::Refused(format!("the {} needs its places in the space of the model: a place on each edge or face it works on", entry.name()));
     };
     let before = core.document();
     let nodes_before = before.features.iter().filter(|f| f.kind == kind).count();
-    take_the_command(core, entry.command);
+    take_the_command(core, the_command_of(entry));
     core.settle(); // the take lands the tool a frame later; the picks click what the tool waits for
     for p in &picks {
         let at = core.in_space(*p);
@@ -757,14 +831,14 @@ fn work_on_the_body(core: &mut qymcad::AgentSession, code: &str, given: &serde_j
 fn tilt_a_face(core: &mut qymcad::AgentSession, code: &str, given: &serde_json::Value) -> Answered {
     let Some(entry) = by_code(code) else { return Answered::Refused(format!("{code}: no operation of the program is named so")) };
     let Some(picks) = the_triples(given.get("picks")) else {
-        return Answered::Refused(format!("the {} needs its places in the space of the model: the face to tilt, then the neutral face it turns about", entry.command.name()));
+        return Answered::Refused(format!("the {} needs its places in the space of the model: the face to tilt, then the neutral face it turns about", entry.name()));
     };
     let Some((neutral, to_tilt)) = picks.split_last() else {
         return Answered::Refused("the draft needs two places: the face to tilt, then the neutral face it turns about".into());
     };
     let before = core.document();
     let nodes_before = before.features.iter().filter(|f| f.kind == "Draft").count();
-    take_the_command(core, entry.command);
+    take_the_command(core, the_command_of(entry));
     core.settle(); // the take lands the tool a frame later; the picks click what the tool waits for
     for p in to_tilt {
         let at = core.in_space(*p);
@@ -795,7 +869,7 @@ fn work_from_the_sketches(core: &mut qymcad::AgentSession, code: &str, given: &s
     let Some(entry) = by_code(code) else { return Answered::Refused(format!("{code}: no operation of the program is named so")) };
     let kind = if code == "part.loft" { "Loft" } else { "Sweep" };
     let Some(names) = the_names_of(given.get("sketches")) else {
-        return Answered::Refused(format!("the {} needs the names of the sketches it works from: the profile then the path, or each section in its turn", entry.command.name()));
+        return Answered::Refused(format!("the {} needs the names of the sketches it works from: the profile then the path, or each section in its turn", entry.name()));
     };
     let Some((first, rest)) = names.split_first() else {
         return Answered::Refused("the tool needs the names of the sketches it works from, two at least".into());
@@ -807,7 +881,7 @@ fn work_from_the_sketches(core: &mut qymcad::AgentSession, code: &str, given: &s
     core.click(row.center());
     let before = core.document();
     let nodes_before = before.features.iter().filter(|f| f.kind == kind).count();
-    take_the_command(core, entry.command);
+    take_the_command(core, the_command_of(entry));
     core.settle(); // the take lands the tool a frame later; the row clicks land on what it waits for
     for name in rest {
         let Some(row) = core.find(name, qymcad::pos2(0.0, 300.0)) else {
@@ -842,7 +916,7 @@ fn stand_a_datum(core: &mut qymcad::AgentSession, code: &str, given: &serde_json
     let picks = the_triples(given.get("picks")).unwrap_or_default();
     let before = core.document();
     let volume_before = before.bodies.iter().filter(|b| !b.consumed).map(|b| b.volume).sum::<f64>();
-    take_the_command(core, entry.command);
+    take_the_command(core, the_command_of(entry));
     core.settle(); // the take lands the tool a frame later; the pick clicks what the tool waits for
     for p in &picks {
         let at = core.in_space(*p);
@@ -876,7 +950,7 @@ const JOINT_KINDS: &[(&str, &str)] = &[
 ];
 
 /// THE WORDS OF A KIND, matched as the program matches its own names: case, dashes and spaces aside.
-fn the_same_kind(a: &str, b: &str) -> bool {
+pub(crate) fn the_same_kind(a: &str, b: &str) -> bool {
     let squeeze = |w: &str| w.to_lowercase().replace(['-', ' ', '_'], "");
     squeeze(a) == squeeze(b)
 }
@@ -891,7 +965,7 @@ fn the_same_kind(a: &str, b: &str) -> bool {
 fn lay_a_joint(core: &mut qymcad::AgentSession, code: &str, given: &serde_json::Value) -> Answered {
     let Some(entry) = by_code(code) else { return Answered::Refused(format!("{code}: no operation of the program is named so")) };
     let Some(picks) = the_triples(given.get("picks")) else {
-        return Answered::Refused(format!("the {} needs its places in the space of the model: an anchor on each of the two parts", entry.command.name()));
+        return Answered::Refused(format!("the {} needs its places in the space of the model: an anchor on each of the two parts", entry.name()));
     };
     let [a, b, ..] = picks.as_slice() else {
         return Answered::Refused("the joint needs two places: an anchor on part A, then on part B".into());
@@ -904,7 +978,7 @@ fn lay_a_joint(core: &mut qymcad::AgentSession, code: &str, given: &serde_json::
     };
     let wanted = core.word(key);
     let before = core.document().joints.len();
-    take_the_command(core, entry.command);
+    take_the_command(core, the_command_of(entry));
     core.settle(); // the take lands the tool a frame later; the bar stands before its list is opened
     let caption = core.word("j-kind");
     let list = core.field(&caption);
@@ -931,13 +1005,13 @@ fn lay_a_joint(core: &mut qymcad::AgentSession, code: &str, given: &serde_json::
 fn ground_a_part(core: &mut qymcad::AgentSession, code: &str, given: &serde_json::Value) -> Answered {
     let Some(entry) = by_code(code) else { return Answered::Refused(format!("{code}: no operation of the program is named so")) };
     let Some(picks) = the_triples(given.get("picks")) else {
-        return Answered::Refused(format!("the {} needs its place in the space of the model: on the part to fix", entry.command.name()));
+        return Answered::Refused(format!("the {} needs its place in the space of the model: on the part to fix", entry.name()));
     };
     let [on, ..] = picks.as_slice() else {
         return Answered::Refused("the grounding needs one place: on the part to fix".into());
     };
     let before = core.document().parts.iter().filter(|p| p.grounded).count();
-    take_the_command(core, entry.command);
+    take_the_command(core, the_command_of(entry));
     core.settle(); // the take lands the tool a frame later; the click lands on what it waits for
     let at = core.face_at(*on);
     core.click(at);
@@ -957,12 +1031,12 @@ fn ground_a_part(core: &mut qymcad::AgentSession, code: &str, given: &serde_json
 fn hold_the_parts_together(core: &mut qymcad::AgentSession, code: &str, given: &serde_json::Value) -> Answered {
     let Some(entry) = by_code(code) else { return Answered::Refused(format!("{code}: no operation of the program is named so")) };
     let Some(picks) = the_triples(given.get("picks")) else {
-        return Answered::Refused(format!("the {} needs its places in the space of the model: on each part to hold, two at least", entry.command.name()));
+        return Answered::Refused(format!("the {} needs its places in the space of the model: on each part to hold, two at least", entry.name()));
     };
     if picks.len() < 2 {
         return Answered::Refused("the group needs the parts it holds, two at least".into());
     }
-    the_mates_of_a_clicking_tool(core, entry.command, &picks, "Group", "the parts held together where they stand (a Group mate)")
+    the_mates_of_a_clicking_tool(core, the_command_of(entry), &picks, "Group", "the parts held together where they stand (a Group mate)")
 }
 
 /// REST A SHAFT ON A FACE - a tangent: the command taken, the plane clicked, then the round side of
@@ -972,12 +1046,12 @@ fn hold_the_parts_together(core: &mut qymcad::AgentSession, code: &str, given: &
 fn rest_a_shaft_on_the_face(core: &mut qymcad::AgentSession, code: &str, given: &serde_json::Value) -> Answered {
     let Some(entry) = by_code(code) else { return Answered::Refused(format!("{code}: no operation of the program is named so")) };
     let Some(picks) = the_triples(given.get("picks")) else {
-        return Answered::Refused(format!("the {} needs its places in the space of the model: the plane, then the round side of the shaft", entry.command.name()));
+        return Answered::Refused(format!("the {} needs its places in the space of the model: the plane, then the round side of the shaft", entry.name()));
     };
     if picks.len() != 2 {
         return Answered::Refused("the tangent needs two places: the plane, then the round side of the shaft".into());
     }
-    the_mates_of_a_clicking_tool(core, entry.command, &picks, "Tangent", "the shaft rests on the face (a Tangent mate)")
+    the_mates_of_a_clicking_tool(core, the_command_of(entry), &picks, "Tangent", "the shaft rests on the face (a Tangent mate)")
 }
 
 /// SIT A PART BETWEEN TWO WALLS - a width: the command taken, the two walls clicked, then the part
@@ -986,12 +1060,12 @@ fn rest_a_shaft_on_the_face(core: &mut qymcad::AgentSession, code: &str, given: 
 fn sit_the_part_between_the_walls(core: &mut qymcad::AgentSession, code: &str, given: &serde_json::Value) -> Answered {
     let Some(entry) = by_code(code) else { return Answered::Refused(format!("{code}: no operation of the program is named so")) };
     let Some(picks) = the_triples(given.get("picks")) else {
-        return Answered::Refused(format!("the {} needs its places in the space of the model: the two walls, then the part between them", entry.command.name()));
+        return Answered::Refused(format!("the {} needs its places in the space of the model: the two walls, then the part between them", entry.name()));
     };
     if picks.len() != 3 {
         return Answered::Refused("the width needs three places: the two walls, then the part between them".into());
     }
-    the_mates_of_a_clicking_tool(core, entry.command, &picks, "Width", "the part sits midway between the walls (a Width mate)")
+    the_mates_of_a_clicking_tool(core, the_command_of(entry), &picks, "Width", "the part sits midway between the walls (a Width mate)")
 }
 
 /// THE SHARED BODY OF THE MATES THAT CLICK THEIR PARTS: the command taken, every place clicked in
@@ -1020,7 +1094,7 @@ fn the_mates_of_a_clicking_tool(core: &mut qymcad::AgentSession, command: &qymca
 fn tie_the_mates_together(core: &mut qymcad::AgentSession, code: &str, given: &serde_json::Value) -> Answered {
     let Some(entry) = by_code(code) else { return Answered::Refused(format!("{code}: no operation of the program is named so")) };
     let Some(names) = the_names_of(given.get("joints")) else {
-        return Answered::Refused(format!("the {} needs the names of the joints it ties, two at least", entry.command.name()));
+        return Answered::Refused(format!("the {} needs the names of the joints it ties, two at least", entry.name()));
     };
     if names.len() < 2 {
         return Answered::Refused("the relation needs the joints it ties, two at least".into());
@@ -1032,7 +1106,7 @@ fn tie_the_mates_together(core: &mut qymcad::AgentSession, code: &str, given: &s
         }
     }
     let before = core.document().mates.iter().filter(|m| *m == "Gear").count();
-    take_the_command(core, entry.command);
+    take_the_command(core, the_command_of(entry));
     core.settle(); // the take lands the tool a frame later; the rows click into what it waits for
     for name in &names {
         let Some(row) = core.find(name, qymcad::pos2(1100.0, 600.0)) else {
@@ -1047,6 +1121,75 @@ fn tie_the_mates_together(core: &mut qymcad::AgentSession, code: &str, given: &s
         Answered::Ran(format!("a Gear relation made, tying {} to {}", names[0], names[1]))
     } else {
         Answered::Refused(format!("nothing was tied: {}", core.status()))
+    }
+}
+
+/// MEASURE WHAT THE PICKS NAME, as the person's own tool does: the tool taken from its bar button
+/// where it does not stand (the button is a toggle, and pressing it over a standing tool would put it
+/// down - the tool's own bar on screen says whether it stands), every place clicked in turn - each
+/// names a vertex, an edge or a face - and the measured value stands in the status line, in the
+/// program's own words. Two places measure between them; one says its own length or diameter. Places
+/// that name nothing measure nothing, and the call is refused with what the status line then says.
+fn measure_between_the_picks(core: &mut qymcad::AgentSession, code: &str, given: &serde_json::Value) -> Answered {
+    let Some(entry) = by_code(code) else { return Answered::Refused(format!("{code}: no operation of the program is named so")) };
+    let Some(picks) = the_triples(given.get("picks")) else {
+        return Answered::Refused(format!("the {} needs its places in the space of the model: the two things it measures", entry.name()));
+    };
+    let bar = core.word("m3-hint-short");
+    if core.find(&bar, qymcad::pos2(640.0, 0.0)).is_none() {
+        let measure = core.word("tb-measure3d-hint");
+        let Some(button) = core.find_hint(&measure) else {
+            return Answered::Refused("the measure of the 3D view is reached from the bar of a workbench in 3D - finish the sketch and measure again".into());
+        };
+        core.click(button);
+        core.settle(); // the take lands the tool a frame later; the picks click what it waits for
+    }
+    for p in &picks {
+        let at = core.in_space(*p);
+        core.click(at);
+    }
+    let said = core.status();
+    core.key(qymcad::Key::Escape); // the tool put down, as the person's Esc leaves it; the measured words are said
+    if said == core.word("m3-miss") || said == core.word("m3-hint") || said.trim().is_empty() {
+        return Answered::Refused(format!("nothing was measured: {said}"));
+    }
+    Answered::Ran(said)
+}
+
+/// CUT THE VIEW BY THE PLANE THE PICK NAMES - the section: the section's bar button taken (a toggle -
+/// where a section already stands, the button puts it away first, as a person's press would), the
+/// plane clicked where the pick lands - a face of the body, a datum, a world plane - Enter applying
+/// what the pick laid. Half the model is hidden and its inside shows; the document itself is
+/// untouched, and the answer says the view is cut. Where no bar of a workbench stands - the sheet of
+/// an open sketch - the call is refused in words.
+fn cut_the_view_by_a_plane(core: &mut qymcad::AgentSession, code: &str, given: &serde_json::Value) -> Answered {
+    let Some(entry) = by_code(code) else { return Answered::Refused(format!("{code}: no operation of the program is named so")) };
+    let Some(picks) = the_triples(given.get("picks")) else {
+        return Answered::Refused(format!("the {} needs its place in the space of the model: a place on the plane or face it cuts by", entry.name()));
+    };
+    let [on, ..] = picks.as_slice() else { return Answered::Refused("the section needs one place: on the plane or face it cuts by".into()) };
+    let section = core.word("sec-btn");
+    let engaged = core.find(&section, qymcad::pos2(640.0, 0.0)).is_some();
+    let in_the_assembly = core.word("tb-section-hint");
+    let in_the_part = core.word("tb-section-hint-bar");
+    let button = core.find_hint(&in_the_assembly).or_else(|| core.find_hint(&in_the_part));
+    let Some(button) = button else {
+        return Answered::Refused("the section is reached from the bar of the Part or the Assembly workbench in 3D - finish the sketch and section again".into());
+    };
+    if engaged {
+        core.click(button);
+        core.settle();
+    }
+    core.click(button);
+    core.settle(); // the take lands the pick a frame later; the click lands on what it waits for
+    let at = core.in_space(*on);
+    core.click(at);
+    core.key(qymcad::Key::Enter); // applies what the pick laid, as the bar's own Apply does
+    core.settle();
+    if core.document().section {
+        Answered::Ran(format!("the view cut by the plane through ({}, {}, {}); the document is untouched", on[0], on[1], on[2]))
+    } else {
+        Answered::Refused(format!("no section stands: {}", core.status()))
     }
 }
 
@@ -1084,7 +1227,7 @@ fn pick_the_places(core: &mut qymcad::AgentSession, places: &[(f64, f64)]) {
 
 /// THE WORDS A PARAMETER CARRIES, read whether the call gave them as words or as a number: a size or an
 /// angle arrives either way, and the field it is typed into takes its digits all the same.
-fn the_words_of(given: &serde_json::Value, name: &str) -> Option<String> {
+pub(crate) fn the_words_of(given: &serde_json::Value, name: &str) -> Option<String> {
     match given.get(name)? {
         serde_json::Value::String(s) => Some(s.clone()),
         other => Some(other.to_string()),
@@ -1144,17 +1287,17 @@ fn the_pairs(value: &serde_json::Value) -> Option<Vec<(f64, f64)>> {
 fn the_take(core: &mut qymcad::AgentSession, code: &str, _parameters: &serde_json::Value) -> Answered {
     let Some(entry) = by_code(code) else { return Answered::Refused(format!("{code}: no operation of the program is named so")) };
     let held = core.in_hand();
-    take_the_command(core, entry.command);
+    take_the_command(core, the_command_of(entry));
     let said = core.status();
     if core.in_hand().iter().eq(held.iter()) {
         return Answered::Refused(said);
     }
-    Answered::Ran(format!("{} is taken; its bar stands in the window - fill its fields and press Enter to apply, Esc puts it down", entry.command.name()))
+    Answered::Ran(format!("{} is taken; its bar stands in the window - fill its fields and press Enter to apply, Esc puts it down", entry.name()))
 }
 
 /// THE ENTRY OF A CODE, as `call-tool` names an operation.
 pub(crate) fn by_code(code: &str) -> Option<&'static Entry> {
-    the_registry().iter().find(|e| e.command.code == code)
+    the_registry().iter().find(|e| e.code() == code)
 }
 
 /// THE HITS OF A SEARCH, by the command search's own rules: an operation is found by its code, by its
@@ -1172,18 +1315,18 @@ pub(crate) fn the_hits(query: &str, only: Option<&str>, now_in: &str) -> Vec<&'s
     let mut rest: Vec<(usize, &Entry)> = Vec::new();
     for entry in the_registry() {
         if let Some(want) = only {
-            if entry.command.workbench != want {
+            if entry.workbench() != want {
                 continue;
             }
         }
         let Some(rank) = the_words_it_is_found_by(entry).iter().filter_map(|w| w.to_lowercase().find(&q)).min() else { continue };
-        if entry.command.workbench == now_in {
+        if entry.workbench() == now_in {
             mine.push((rank, entry));
         } else {
             rest.push((rank, entry));
         }
     }
-    let by_rank_then_code = |a: &(usize, &Entry), b: &(usize, &Entry)| (a.0, a.1.command.code).cmp(&(b.0, b.1.command.code));
+    let by_rank_then_code = |a: &(usize, &Entry), b: &(usize, &Entry)| (a.0, a.1.code()).cmp(&(b.0, b.1.code()));
     mine.sort_by(by_rank_then_code);
     rest.sort_by(by_rank_then_code);
     mine.into_iter().chain(rest).map(|(_, e)| e).collect()
@@ -1192,9 +1335,9 @@ pub(crate) fn the_hits(query: &str, only: Option<&str>, now_in: &str) -> Vec<&'s
 /// THE WORDS AN OPERATION IS FOUND BY: its code, its names in each language, the title of its help
 /// article in each of them, and the words it is also known by.
 fn the_words_it_is_found_by(entry: &Entry) -> Vec<String> {
-    let mut words = vec![entry.command.code.to_string()];
+    let mut words = vec![entry.code().to_string()];
     words.extend(entry.names().into_values());
-    if let Some(article) = entry.command.help_article() {
+    if let Some(article) = entry.help_article() {
         words.extend(qymcad_help::languages().into_iter().filter_map(|l| qymcad_help::title_in(&l, article)));
     }
     words.extend(entry.synonyms.iter().map(|s| s.to_string()));
@@ -1218,6 +1361,19 @@ pub(crate) struct Parameter {
 pub(crate) fn take_the_command(core: &mut qymcad::AgentSession, command: &qymcad::Command) {
     let name = command.name();
     core.chord(qymcad::Modifiers::COMMAND, qymcad::Key::K).type_text(&name).key(qymcad::Key::Enter);
+}
+
+/// THE COMMAND A RUN TAKES THROUGH THE SEARCH: the runs of the catalogue's commands work through one.
+/// An operation of the whole program is taken by no command and works its own gestures; a run that
+/// reaches for its command is wired to the wrong table, and the panic says so where it stands.
+fn the_command_of(entry: &Entry) -> &'static qymcad::Command {
+    entry.the_command().unwrap_or_else(|| panic!("{} is no command of the catalogue to take", entry.code()))
+}
+
+/// DOES THE COMMAND OPEN A BAR OF ITS OWN when it is taken: the numbered launches do; an action arms a
+/// mode or opens a window and puts no bar up.
+fn opens_a_bar(command: &qymcad::Command) -> bool {
+    matches!(command.launch, qymcad::Launch::Feat(_) | qymcad::Launch::Prim(_) | qymcad::Launch::SkTool(_) | qymcad::Launch::Dim(_) | qymcad::Launch::ClickOp(_) | qymcad::Launch::Modify(_))
 }
 
 /// THE INPUT FIELDS ON SCREEN, in reading order: what a person can type into, each read as a parameter -
@@ -1276,20 +1432,26 @@ fn the_kind_word(kind: qymcad::Kind) -> &'static str {
     }
 }
 
-/// THE PARAMETERS OF THE COMMAND of `code`, read from the live tool: the command is taken as a person
-/// takes it, and the fields the take put up - and nothing that stood on screen before it - are its
-/// parameters, in the bar's own order. Where the take landed a tool it is put down again; the document is
-/// left as it stood. Where the command does not open, nothing to work on, no field comes up and none is
+/// THE PARAMETERS OF THE OPERATION of `code`, read from the live tool where it is a command that opens
+/// a bar: the command is taken as a person takes it, and the fields the take put up - and nothing that
+/// stood on screen before it - are its parameters, in the bar's own order. Where the take landed a tool
+/// it is put down again; the document is left as it stood. The actions arm a mode or open a window and
+/// put no bar up, and taking one to read it would leave the mode armed (a toggle taken twice is a
+/// toggle undone) - their parameters, and those of the operations of the whole program, are the run's
+/// takes alone. Where the command does not open, nothing to work on, no field comes up and none is
 /// answered.
 pub(crate) fn parameters(core: &mut qymcad::AgentSession, code: &str) -> Vec<Parameter> {
     let Some(entry) = by_code(code) else { return Vec::new() };
-    let before = the_fields_on_screen(core);
-    let held = core.in_hand();
-    take_the_command(core, entry.command);
-    let mut put_up = the_fields_on_screen(core);
-    put_up.retain(|f| !before.iter().any(|b| b.name == f.name && b.kind == f.kind));
-    put_down_what_the_take_landed(core, &held);
-    let mut all = put_up;
+    let mut all = Vec::new();
+    if let Some(command) = entry.the_command().filter(|c| opens_a_bar(c)) {
+        let before = the_fields_on_screen(core);
+        let held = core.in_hand();
+        take_the_command(core, command);
+        let mut put_up = the_fields_on_screen(core);
+        put_up.retain(|f| !before.iter().any(|b| b.name == f.name && b.kind == f.kind));
+        put_down_what_the_take_landed(core, &held);
+        all = put_up;
+    }
     all.extend(entry.takes.iter().map(|t| Parameter {
         name: t.name.to_string(),
         kind: t.kind.to_string(),
@@ -1321,20 +1483,30 @@ fn put_down_what_the_take_landed(core: &mut qymcad::AgentSession, held: &[String
 mod tests {
     use super::*;
 
-    /// THE REGISTRY IS THE CATALOGUE, derived whole: every command of the catalogue is an entry, each
-    /// entry carries its command's code and workbench, its names in each language the program speaks -
-    /// and nothing stands in the registry the catalogue does not hold.
+    /// THE REGISTRY IS THE CATALOGUE AND THE HELP, derived whole: every command of the catalogue is an
+    /// entry, each entry carries its command's code and workbench, its names in each language the
+    /// program speaks; beside them stand the operations of the whole program, each named by its article
+    /// in each language - and nothing else stands in the registry.
     #[test]
     fn the_registry_is_derived_from_the_catalogue_whole() {
         for command in qymcad::COMMANDS {
             let Some(entry) = by_code(command.code) else { panic!("{} is in the catalogue and not in the registry", command.code) };
-            assert_eq!(entry.command.code, command.code, "the entry of {} answers another code", command.code);
-            assert_eq!(entry.command.workbench, command.workbench, "{} carries the wrong workbench", command.code);
+            assert_eq!(entry.code(), command.code, "the entry of {} answers another code", command.code);
+            assert_eq!(entry.workbench(), command.workbench, "{} carries the wrong workbench", command.code);
             for (language, name) in entry.names() {
                 assert!(!name.is_empty(), "{} is nameless in {language}", command.code);
             }
         }
-        assert_eq!(the_registry().len(), qymcad::COMMANDS.len(), "the registry holds entries the catalogue does not");
+        for entry in the_registry().iter().filter(|e| e.the_command().is_none()) {
+            for (language, name) in entry.names() {
+                assert!(!name.is_empty(), "{} is nameless in {language}: its article names it not", entry.code());
+            }
+        }
+        assert_eq!(
+            the_registry().len(),
+            qymcad::COMMANDS.len() + crate::general::THE_OPERATIONS_OF_THE_PROGRAM.len(),
+            "the registry holds entries neither the catalogue nor the table of the program's own operations carries"
+        );
     }
 
     /// THE PARAMETERS OF EVERY FEATURE COMMAND come from the live tool: taking the command puts its bar
@@ -1374,12 +1546,12 @@ mod tests {
                 .collect()
         }
         let mut bars_opened = 0;
-        for entry in the_registry().iter().filter(|e| matches!(e.command.launch, qymcad::Launch::Feat(_) | qymcad::Launch::Prim(_))) {
-            let code = entry.command.code;
+        for entry in the_registry().iter().filter(|e| e.the_command().is_some_and(|c| matches!(c.launch, qymcad::Launch::Feat(_) | qymcad::Launch::Prim(_)))) {
+            let code = entry.code();
             let own = crate::checks::ask_the_core(&mut program, move |core| {
                 let before = the_screen(core);
                 let held = core.in_hand();
-                take_the_command(core, by_code(code).expect("the code names an entry").command);
+                take_the_command(core, the_command_of(by_code(code).expect("the code names an entry")));
                 let after = the_screen(core);
                 let put_up: Vec<(String, String)> = after.into_iter().filter(|(name, _)| !before.iter().any(|(n, _)| n == name)).collect();
                 for _ in 0..3 {
@@ -1411,28 +1583,28 @@ mod tests {
     /// nothing.
     #[test]
     fn search_finds_an_operation_by_any_of_its_names() {
-        let finds = |needle: &str, code: &str| the_hits(needle, None, "part").iter().any(|e| e.command.code == code);
+        let finds = |needle: &str, code: &str| the_hits(needle, None, "part").iter().any(|e| e.code() == code);
         let line = by_code("sketch.line").expect("the line is in the registry");
         assert!(finds("sketch.line", "sketch.line"), "a command's own code found it not");
         for (language, name) in line.names() {
             assert!(finds(&name, "sketch.line"), "the {language} name {name:?} found the line not");
         }
         let the_box = by_code("part.box").expect("the box is in the registry");
-        let article = the_box.command.help_article().expect("the box points at an article");
+        let article = the_box.help_article().expect("the box points at an article");
         for language in qymcad_help::languages() {
             let Some(title) = qymcad_help::title_in(&language, article) else { continue };
             assert!(finds(&title, "part.box"), "the article title {title:?} of {language} found the box not");
         }
         assert!(finds("round", "part.fillet"), "the word the fillet is also known by found it not");
-        assert!(the_hits("fillet", Some("sketch"), "part").iter().all(|e| e.command.workbench == "sketch"), "the workbench filter let another workbench through");
+        assert!(the_hits("fillet", Some("sketch"), "part").iter().all(|e| e.workbench() == "sketch"), "the workbench filter let another workbench through");
         let hits = the_hits("line", None, "part");
         assert_eq!(
-            hits.first().map(|e| e.command.workbench),
+            hits.first().map(|e| e.workbench()),
             Some("part"),
             "a command of the standing workbench did not come first: {:?}",
-            the_hits("line", None, "part").iter().map(|e| e.command.code).collect::<Vec<_>>()
+            the_hits("line", None, "part").iter().map(|e| e.code()).collect::<Vec<_>>()
         );
-        assert!(hits.iter().any(|e| e.command.code == "sketch.line"), "the line was not found at all");
+        assert!(hits.iter().any(|e| e.code() == "sketch.line"), "the line was not found at all");
         assert!(the_hits("qqqqzzzz", None, "part").is_empty(), "a miss found something");
     }
 
@@ -1445,13 +1617,13 @@ mod tests {
     #[test]
     fn the_guard_holds_the_link_between_the_catalogue_and_the_registry() {
         for entry in the_registry() {
-            let mut needles = vec![entry.command.code.to_string()];
+            let mut needles = vec![entry.code().to_string()];
             needles.extend(entry.names().into_values());
             needles.extend(entry.synonyms.iter().map(|s| s.to_string()));
             for needle in needles {
-                assert!(the_hits(&needle, None, "part").iter().any(|e| e.command.code == entry.command.code), "{} is not found by {needle:?}", entry.command.code);
+                assert!(the_hits(&needle, None, "part").iter().any(|e| e.code() == entry.code()), "{} is not found by {needle:?}", entry.code());
             }
-            assert!(entry.run.is_some(), "{} is wired to no run", entry.command.code);
+            assert!(entry.run.is_some(), "{} is wired to no run", entry.code());
         }
         let _turn = crate::checks::take_your_turn();
         // ON A BARE START every run answers in words - the take lands the commands that need nothing,
@@ -1462,7 +1634,7 @@ mod tests {
         let mut program = qymcad::LiveLoop::start();
         let mut landed = 0;
         for entry in the_registry().iter().filter(|e| e.takes.is_empty()) {
-            let code = entry.command.code;
+            let code = entry.code();
             let answered = crate::checks::ask_the_core(&mut program, move |core| {
                 let the_run = by_code(code).expect("the code names an entry").run.expect("the entry is wired");
                 let answered = the_run(core, code, &serde_json::json!({}));
@@ -1480,7 +1652,7 @@ mod tests {
                 }
                 Answered::Refused(words) => words.clone(),
             };
-            assert!(!said.is_empty(), "{} said nothing when it ran", entry.command.code);
+            assert!(!said.is_empty(), "{} said nothing when it ran", entry.code());
         }
         assert!(landed >= 7, "only {landed} of the take-only commands landed their tool on a bare start; the runs have gone mute");
         // OVER AN OPEN SKETCH every run that takes parameters runs with what its own work needs: the
@@ -1574,8 +1746,8 @@ mod tests {
         // the open sketch of this one has none; the part features are held for the block phase - their
         // picks are places in the space of a body)
         let mut square = 0;
-        for entry in the_registry().iter().filter(|e| !e.takes.is_empty() && e.command.workbench == "sketch" && e.command.code != "sketch.project") {
-            let code = entry.command.code;
+        for entry in the_registry().iter().filter(|e| !e.takes.is_empty() && e.workbench() == "sketch" && e.code() != "sketch.project") {
+            let code = entry.code();
             // the squares run right four and then up a row, the span of the whole loop kept narrow
             square += 1;
             let (x, y) = (60.0 + 60.0 * ((square - 1) % 4) as f64, 100.0 + 60.0 * ((square - 1) / 4) as f64);
@@ -1588,7 +1760,7 @@ mod tests {
                 answered
             })
             .expect("the run answered");
-            assert!(matches!(answered, Answered::Ran(_)), "{} worked nothing over the open sketch: {answered:?}", entry.command.code);
+            assert!(matches!(answered, Answered::Ran(_)), "{} worked nothing over the open sketch: {answered:?}", entry.code());
         }
         // OVER A SKETCH SEATED ON THE FACE OF A BODY the projection runs: a block through the registry's
         // own gestures, the pencil of the panel, the top face clicked, the projection of its edges

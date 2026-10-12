@@ -386,7 +386,7 @@ pub static SECTION: Tool = Tool {
     id: "assembly.section",
     flow: Flow::Command,
     title: "sec-btn",
-    entries: &[Entry::Button("tb-section-hint")],
+    entries: &[Entry::Button("tb-section-hint"), Entry::Search("sec-btn")],
     other: (Entry::Button("tb-ground-hint"), "jt-ground-btn"),
     fixture: Fixture::BlockInAssembly,
     picks: &[Pick::Face([20.0, 15.0, 10.0])],

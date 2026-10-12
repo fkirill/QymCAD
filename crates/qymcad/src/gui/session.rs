@@ -230,9 +230,61 @@ impl<'a> AgentSession<'a> {
     /// chooser never put up, the path carried by the call itself. Nothing is written when no body holds a
     /// B-rep: the status line says so, as it does for a person.
     pub fn export_step(&mut self, path: &str) {
-        let Some(job) = super::io_jobs::exact_export_job(&mut self.app, qymcad_kernel::ExactFormat::Step, qymcad_ui_state::ExportTarget::Project) else { return };
+        self.export_exact(qymcad_kernel::ExactFormat::Step, path);
+    }
+
+    /// EXPORT THE WHOLE MODEL in an exact format - STEP or IGES - at `path`, as the answer to the export
+    /// chooser does: the chooser never put up, the path carried by the call itself. The write goes to the
+    /// background; settle waits it out. Nothing is written when no body holds a B-rep: the status line
+    /// says so, as it does for a person.
+    pub fn export_exact(&mut self, format: qymcad_kernel::ExactFormat, path: &str) {
+        let Some(job) = super::io_jobs::exact_export_job(&mut self.app, format, qymcad_ui_state::ExportTarget::Project) else { return };
         let app = &mut *self.app;
         super::io_jobs::write_exact_to(&mut app.live, &mut app.project, &mut app.regen, &mut app.status, std::path::Path::new(path), &job);
+    }
+
+    /// EXPORT THE WHOLE MODEL as a mesh - STL, OBJ, PLY, glTF, 3MF or AMF - at `path`, at the detail
+    /// (a deflection in mm) the call carries, as the answer to the export chooser does: the chooser never
+    /// put up, the path carried by the call itself. Nothing is written when no body stands: the status
+    /// line says so, as it does for a person.
+    pub fn export_mesh(&mut self, format: qymcad_ui_state::MeshFormat, path: &str, deflection: f64) {
+        super::io_jobs::ensure_brep(&mut self.app.rebuild_ctx()); // the quality comes from re-tessellating the live B-rep
+        let plan = self.app.export_plan(qymcad_ui_state::ExportTarget::Project);
+        let note = plan.note(false);
+        let bodies = plan.stl_bodies();
+        if bodies.is_empty() {
+            self.app.status = crate::i18n::tr1("io-mesh-no-bodies", "format", crate::gui::mesh_entry(format).name());
+            return;
+        }
+        let job = super::io_jobs::mesh_job(&self.app.project, format, qymcad_ui_state::ExportTarget::Project, bodies, note, deflection);
+        let app = &mut *self.app;
+        super::io_jobs::write_mesh_to(qymcad_ui_state::editing_of!(app), &mut app.live, std::path::Path::new(path), &job);
+    }
+
+    /// EXPORT THE SKETCH NAMED `sketch` as a drawing - an SVG (`dxf` false) or a DXF (`dxf` true) - at
+    /// `path`, the exact curves of the sheet, not a tessellation: the same write the tree's export menu
+    /// makes when its chooser is answered. A sketch the tree does not hold, or one with nothing to draw,
+    /// is said so in the status line and nothing is written.
+    pub fn export_sketch(&mut self, sketch: &str, dxf: bool, path: &str) {
+        let Some(si) = self.app.project.sketches.iter().position(|s| crate::i18n::name(&s.name) == sketch) else {
+            let held: Vec<String> = self.app.project.sketches.iter().map(|s| crate::i18n::name(&s.name)).collect();
+            self.app.status = format!("{sketch}: no sketch of the tree is named so; the tree holds {held:?}");
+            return;
+        };
+        let edges = qymcad_sketch::sketch_export_edges(&self.app.project, si);
+        if edges.is_empty() {
+            self.app.status = crate::i18n::tr("io-export-empty-sketch");
+            return;
+        }
+        let (format, write) = if dxf {
+            ("DXF", qymcad_io::export_dxf as fn(&[qymcad_core::geom::ProfEdge], &str) -> Result<(), String>)
+        } else {
+            ("SVG", qymcad_io::export_svg as fn(&[qymcad_core::geom::ProfEdge], &str) -> Result<(), String>)
+        };
+        match write(&edges, path) {
+            Ok(()) => self.app.status = format!("{format} -> {path}"),
+            Err(e) => self.app.status = crate::i18n::name(&e),
+        }
     }
 
     /// IMPORT THE FILE AT `path`, as the answer to the import chooser does - the chooser never put up, the
