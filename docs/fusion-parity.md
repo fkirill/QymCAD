@@ -54,6 +54,25 @@ Known, routed around, not yet fixed:
   the bar stays in hand — the words are right, the shape is a design question for the
   registry.
 
+## Geometry by value - the one capability the reproduction still waits on
+
+The whole chain is proven end to end on real parts: sketches drawn with retries and
+stepped-back-into, curves trimmed at their true intersections, the extrude ladder (take ->
+click the contours -> Enter sets the size -> Length -> Enter), layered extrusions over one
+sketch through `ui.open`, the Flip side, per-part volume and bounding-box checks against the
+source document's own numbers. A three-layer ring built this way came out exact: volumes in
+the ratio 1:2:3 and the bounding box at -1..2 mm along the axis, as the source has it.
+
+What still fails: profiles made of many curves that must meet EXACTLY - the finned disk's 30
+flank arcs among three rings. Curves drawn by clicks carry pixel-level slop; snapping rounds to
+the grid instead of onto the curve; trimming heals crossings exactly, but a trim click names its
+piece by position, so it needs the drawn geometry to be where the call says it is. The missing
+piece is entry of sketch geometry BY VALUE - a circle by its centre and radius, an arc by its
+centre, radius and two angles, as the numbers the source document already holds - or a read-back
+of the drawn curves so a client can aim its trims at what actually stands. Either one unblocks
+the disk and every part like it; the simple rectilinear parts (boxes, connectors, pads, legs)
+do not need it - their lines and circles meet at shared endpoints that the vertex snap closes.
+
 ## Fixes and operations added this session
 
 - `fix(mcp): a gesture that cannot land is refused, an untaken call is dropped unread`
