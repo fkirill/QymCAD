@@ -33,5 +33,5 @@ field, walks a menu, presses a key, types.
   Nothing changes in the document by a refused call.
 - **The agent's step came out wrong** - take it back with **Undo**, as with any step of your own.
 - **Nothing answers at all** - see whether the server is still switched on in the settings and
-  whether the client carries the pairing token; the article about the agent's server says where
-  both are.
+  whether the client carries the pairing token; [The agent's server](general/16-agent-server) says
+  where both are.

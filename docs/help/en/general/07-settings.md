@@ -75,14 +75,15 @@ If it comes out wrong, press **Restore the standard layout** and everything goes
 
 ## The agent's server
 
-In the **Agent** section the agent's server is switched on and off. While it is on, a program on this
-machine - an AI agent - can work on the open document: draw, edit, measure, export. Everything it
-does appears in the window as you watch, can be undone with the usual Undo, and the window says so
-while a call of its runs.
+In the **Agent** section the agent's server is switched on and off. While it is on, a program on
+this machine - an AI agent - can work on the open document: draw, edit, measure, export. Everything
+it does appears in the window as you watch, can be undone with the usual Undo, and the window says
+so while a call of its runs.
 
 To let a client in, copy the **pairing token** into the client's settings: a request without the
 token is refused and nothing changes. The server listens on this machine only, on the port named in
-the section; if the port is taken by another program, name another.
+the section.
 
-Switching the server on or off takes effect at once, without restarting. It is off unless you
-switch it on.
+What the agent is and how it works beside you is told of in [The agent](general/15-agent); the
+server itself - the port, the token, what to do when it does not answer - in
+[The agent's server](general/16-agent-server).
