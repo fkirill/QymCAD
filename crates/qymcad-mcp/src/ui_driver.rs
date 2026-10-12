@@ -92,11 +92,11 @@ fn click_a_place(core: &mut qymcad::AgentSession, _code: &str, given: &serde_jso
     };
     match at {
         Place::Sheet(x, y) => {
-            if core.document().editing.is_none() {
-                return Answered::Refused("no sketch is open - a place of the sheet needs one; a place of the space of the model goes as [x, y, z]".into());
+            if !core.flat() {
+                return Answered::Refused("the canvas is the 3D view - a pair [x, y] clicks the flat sheet, wherever it stands: a sketch being drawn, or a tool's bar waiting over a finished one; a place of the space of the model goes as [x, y, z]".into());
             }
             let landed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let _ = core.click_on_sketch(x, y);
+                let _ = core.click_on_sheet(x, y);
             }));
             match landed {
                 Ok(_) => Answered::Ran(format!("the place ({}, {}) of the sheet clicked", x, y)),
@@ -360,7 +360,7 @@ mod tests {
         let stood = ask_the_window(&mut program, |core| core.document());
         for (code, given, named) in [
             ("ui.button", serde_json::json!({ "hint": "a word no plate shows" }), "a word no plate shows"),
-            ("ui.click", serde_json::json!({ "at": [5.0, 5.0] }), "no sketch is open"),
+            ("ui.click", serde_json::json!({ "at": [5.0, 5.0] }), "the canvas is the 3D view"),
             ("ui.field", serde_json::json!({ "label": "A caption of nothing", "text": "1" }), "A caption of nothing"),
             ("ui.menu", serde_json::json!({ "path": ["A menu of nothing"] }), "A menu of nothing"),
             ("ui.key", serde_json::json!({ "key": "not-a-key" }), "not-a-key"),

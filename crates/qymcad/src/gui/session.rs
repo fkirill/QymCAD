@@ -1062,6 +1062,14 @@ impl AgentSession<'_> {
         self.click(at)
     }
 
+    /// CLICK THE FLAT SHEET wherever it stands - a sketch being drawn, or a tool's bar waiting over
+    /// a finished one (the extrude picking its contours): the click lands where the person's would,
+    /// and whoever listens on the canvas takes it.
+    pub fn click_on_sheet(&mut self, x: f64, y: f64) -> &mut Self {
+        let at = self.on_sheet(x, y);
+        self.click(at)
+    }
+
     pub fn drag_on_sketch(&mut self, from: (f64, f64), to: (f64, f64)) -> &mut Self {
         let mid = ((from.0 + to.0) / 2.0, (from.1 + to.1) / 2.0);
         self.on_sketch(mid.0, mid.1);

@@ -535,6 +535,42 @@ mod tests {
         assert_eq!(document.parts.len(), 2, "the edit lost a part");
     }
 
+    /// A CLICK OF THE FLAT SHEET NEEDS NO OPEN SKETCH: the extrude's bar waits for contours over a
+    /// finished sketch - the canvas flat, nothing editing - and the agent's pair [x, y] must reach
+    /// it as the person's click does. Reported behaviour: the pair was refused ("no sketch is
+    /// open"), the triple too ("the canvas is not the 3D view"), and no gesture of the agent could
+    /// pick a contour at all.
+    #[test]
+    fn a_click_of_the_flat_sheet_needs_no_open_sketch() {
+        let _turn = take_your_turn();
+        let mut program = qymcad::LiveLoop::start();
+        step(&mut program, "ui.key", serde_json::json!({ "key": "escape" }));
+        let new_part = button(&mut program, "tb-new-part-hint");
+        step(&mut program, "ui.button", serde_json::json!({ "hint": new_part }));
+        let pencil = button(&mut program, "g-sketch-pick-hint");
+        step(&mut program, "ui.button", serde_json::json!({ "hint": pencil }));
+        step(&mut program, "ui.click", serde_json::json!({ "at": [0.0, 0.0, 0.0] }));
+        step(&mut program, "sketch.rect", serde_json::json!({ "points": [[10.0, 10.0], [50.0, 40.0]] }));
+        step(&mut program, "sketch.rect", serde_json::json!({ "points": [[100.0, 10.0], [160.0, 40.0]] }));
+        step(&mut program, "ui.key", serde_json::json!({ "key": "ctrl+enter" }));
+        // THE TAKE OPENS THE BAR AND IT WAITS: two closed contours stand, neither taken at once,
+        // and the take answers the waiting words - the bar stays in hand for the calls that follow
+        let taken = crate::checks::ask_the_core(&mut program, move |core| crate::registry::call(core, "part.extrude", &serde_json::json!({}))).expect("the take answered");
+        match taken {
+            crate::registry::TheCall::Refused(words) => assert!(words.contains("click a closed contour"), "the waiting bar said something else: {words}"),
+            other => panic!("the take over two contours did not wait for one: {other:?}"),
+        }
+        // THE CLICK REACHES THE CONTOUR the person would point at; Enter sets the size - the bar's
+        // own ladder, one rung a call - the length fills into the field that then stands at the
+        // geometry, and the extrude makes the body of THAT contour alone
+        step(&mut program, "ui.click", serde_json::json!({ "at": [30.0, 25.0] }));
+        step(&mut program, "ui.key", serde_json::json!({ "key": "enter" }));
+        step(&mut program, "ui.field", serde_json::json!({ "label": "Length", "text": "10" }));
+        step(&mut program, "ui.key", serde_json::json!({ "key": "enter" }));
+        let volume = read(&mut program, |core| core.document().bodies.into_iter().filter(|b| !b.consumed && !b.sheet).rfind(|b| b.volume > 0.0).map(|b| b.volume));
+        assert_eq!(volume, Some(12000.0), "the extrude over the clicked contour did not make the 40 x 30 x 10 body alone: {volume:?}");
+    }
+
     /// A CLICK OF THE MODEL'S SPACE OFF THE 3D VIEW IS REFUSED, NOT FATAL: a sketch's sheet stands
     /// flat, a place of the space of the model has nothing to name there, and the call says so in
     /// words; the document stands and the next call is served. Reported behaviour: the click brought
