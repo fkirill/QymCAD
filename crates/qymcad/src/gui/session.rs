@@ -1699,6 +1699,9 @@ impl AgentSession<'_> {
     /// further away is made the other way next time.
     fn bring_into_view(&mut self, at: &dyn Fn(&AgentSession) -> Pos2, buttons: &[PointerButton], modifiers: Modifiers) {
         let (mut drag_sign, mut wheel_sign) = (1.0, -1.0);
+        // a wheel that moves nothing - a layout without it, a gesture the frame took nowhere - gives
+        // way to the drag after three turns: the drag reaches any place, only slower
+        let mut wheel_moved_nothing = 0;
         for _ in 0..48 {
             let canvas = self.app.viewing.view_rect;
             let inner = canvas.shrink2(canvas.size() * 0.1);
@@ -1707,11 +1710,14 @@ impl AgentSession<'_> {
                 return;
             }
             let centre = canvas.center();
-            if before.distance(centre) > canvas.size().length() * 1.5 {
+            if before.distance(centre) > canvas.size().length() * 1.5 && wheel_moved_nothing < 3 {
                 self.wheel(centre, vec2(0.0, 120.0 * wheel_sign), Modifiers::default());
                 self.settle();
                 if at(self).distance(centre) >= before.distance(centre) {
                     wheel_sign = -wheel_sign;
+                    wheel_moved_nothing += 1;
+                } else {
+                    wheel_moved_nothing = 0;
                 }
                 continue;
             }

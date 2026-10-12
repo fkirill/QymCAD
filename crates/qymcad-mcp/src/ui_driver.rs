@@ -18,6 +18,7 @@ pub(crate) const THE_PERSON_S_GESTURES: &[General] = &[
     General { code: "ui.button", article: "general/15-agent", name_key: "mcp-ui-button", synonyms: &["toolbar", "plate"], run: press_a_button, takes: &[Take { name: "hint", kind: "text" }] },
     General { code: "ui.click", article: "general/15-agent", name_key: "mcp-ui-click", synonyms: &["point", "tap"], run: click_a_place, takes: &[Take { name: "at", kind: "place" }] },
     General { code: "ui.pick", article: "general/15-agent", name_key: "mcp-ui-pick", synonyms: &["row", "tree", "select"], run: pick_a_row, takes: &[Take { name: "name", kind: "text" }] },
+    General { code: "ui.open", article: "general/15-agent", name_key: "mcp-ui-open", synonyms: &["edit", "step in"], run: open_a_row, takes: &[Take { name: "name", kind: "text" }] },
     General {
         code: "ui.field",
         article: "general/15-agent",
@@ -156,11 +157,29 @@ fn fill_a_field(core: &mut qymcad::AgentSession, _code: &str, given: &serde_json
 /// joint's row. A name no row reads by is refused in words.
 fn pick_a_row(core: &mut qymcad::AgentSession, _code: &str, given: &serde_json::Value) -> Answered {
     let Some(name) = the_words_of(given, "name") else { return Answered::Refused("the pick needs the name the row reads by".into()) };
-    let Some(at) = core.find(&name, qymcad::pos2(0.0, 300.0)) else {
+    let Some(at) = the_row_of(core, &name) else {
         return Answered::Refused(format!("{name}: no row of the tree reads so"));
     };
     core.click(at.center());
     Answered::Ran(format!("the row of {name} picked"))
+}
+
+/// OPEN A ROW OF THE TREE by its own words - the double click that steps inside a sketch to edit it
+/// again, or into a part: two calls of a pick are two clicks too far apart in time to be one, so the
+/// double click runs whole inside the call, as the person's double click does. A name no row reads
+/// by is refused in words.
+fn open_a_row(core: &mut qymcad::AgentSession, _code: &str, given: &serde_json::Value) -> Answered {
+    let Some(name) = the_words_of(given, "name") else { return Answered::Refused("the open needs the name the row reads by".into()) };
+    let Some(at) = the_row_of(core, &name) else {
+        return Answered::Refused(format!("{name}: no row of the tree reads so"));
+    };
+    core.double_click(at.center());
+    Answered::Ran(format!("the row of {name} opened"))
+}
+
+/// THE ROW THAT READS BY THE NAME, the one nearest the head of the list; `None` when none does.
+fn the_row_of(core: &mut qymcad::AgentSession, name: &str) -> Option<qymcad::Rect> {
+    core.find(name, qymcad::pos2(0.0, 300.0))
 }
 
 /// WALK A MENU by the words of its items, in the order they are walked - the menu bar and the menus

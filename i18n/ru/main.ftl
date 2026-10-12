@@ -2774,6 +2774,7 @@ mcp-the-agent = агент
 mcp-ui-button = Нажать кнопку
 mcp-ui-click = Щёлкнуть по точке
 mcp-ui-pick = Выбрать строку дерева
+mcp-ui-open = Открыть строку дерева
 mcp-ui-field = Заполнить поле
 mcp-ui-menu = Пройти по меню
 mcp-ui-key = Нажать клавишу

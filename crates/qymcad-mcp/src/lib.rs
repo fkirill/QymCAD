@@ -535,6 +535,67 @@ mod tests {
         assert_eq!(document.parts.len(), 2, "the edit lost a part");
     }
 
+    /// A ROW OF THE TREE OPENS BY ITS NAME: a sketch's row is double-clicked to edit it again, and
+    /// two calls of a pick are two clicks too far apart to be one - the double click runs inside the
+    /// one call, as the person's double click does. Without it a layered part - a second extrusion
+    /// over the same sketch - had no way back to the contour picking once the first was applied.
+    #[test]
+    fn a_row_of_the_tree_opens_by_its_name() {
+        let _turn = take_your_turn();
+        let mut program = qymcad::LiveLoop::start();
+        step(&mut program, "ui.key", serde_json::json!({ "key": "escape" }));
+        let new_part = button(&mut program, "tb-new-part-hint");
+        step(&mut program, "ui.button", serde_json::json!({ "hint": new_part }));
+        let pencil = button(&mut program, "g-sketch-pick-hint");
+        step(&mut program, "ui.button", serde_json::json!({ "hint": pencil }));
+        step(&mut program, "ui.click", serde_json::json!({ "at": [0.0, 0.0, 0.0] }));
+        step(&mut program, "sketch.circle", serde_json::json!({ "points": [[10.0, 10.0], [30.0, 10.0]] }));
+        step(&mut program, "sketch.circle", serde_json::json!({ "points": [[40.0, 10.0], [60.0, 10.0]] }));
+        step(&mut program, "ui.key", serde_json::json!({ "key": "ctrl+enter" }));
+        // THE FIRST EXTRUSION over one contour
+        let _ = crate::checks::ask_the_core(&mut program, move |core| crate::registry::call(core, "part.extrude", &serde_json::json!({}))).expect("the take answered");
+        step(&mut program, "ui.click", serde_json::json!({ "at": [10.0, 10.0] }));
+        step(&mut program, "ui.key", serde_json::json!({ "key": "enter" }));
+        step(&mut program, "ui.field", serde_json::json!({ "label": "Length", "text": "5" }));
+        step(&mut program, "ui.key", serde_json::json!({ "key": "enter" }));
+        // THE SKETCH OPENS AGAIN by its name, and the SECOND extrusion follows over the other contour
+        step(&mut program, "ui.open", serde_json::json!({ "name": "Sketch 1" }));
+        let editing = read(&mut program, |core| core.document().editing.is_some());
+        assert!(editing, "the open pick left the sketch closed");
+        step(&mut program, "ui.key", serde_json::json!({ "key": "ctrl+enter" }));
+        let _ = crate::checks::ask_the_core(&mut program, move |core| crate::registry::call(core, "part.extrude", &serde_json::json!({}))).expect("the second take answered");
+        // the second contour AND the lens the circles overlap in, or the pieces do not touch
+        step(&mut program, "ui.click", serde_json::json!({ "at": [45.0, 10.0] }));
+        step(&mut program, "ui.click", serde_json::json!({ "at": [25.0, 10.0] }));
+        step(&mut program, "ui.key", serde_json::json!({ "key": "enter" }));
+        step(&mut program, "ui.field", serde_json::json!({ "label": "Length", "text": "5" }));
+        step(&mut program, "ui.key", serde_json::json!({ "key": "enter" }));
+        let volume = read(&mut program, |core| core.document().bodies.into_iter().filter(|b| !b.consumed && !b.sheet).map(|b| b.volume).sum::<f64>());
+        let want = (2.0 * std::f64::consts::PI * 400.0 - 181.3) * 5.0;
+        assert!((volume - want).abs() < 80.0, "two extrusions of two circles hold {volume}, not the {want} of their union");
+    }
+
+    /// A PLACE FAR ON THE SHEET IS BROUGHT INTO THE CANVAS, not given up on: a sketch opened at the
+    /// scale the sheet starts at, and a circle drawn far from where the view stands - the place is
+    /// dragged nearer, turn by turn, until the click lands. Reported behaviour: the program came
+    /// down whole ("could not be brought into the canvas") when the place stood farther than the
+    /// wheel's reach and the wheel itself moved nothing.
+    #[test]
+    fn a_place_far_on_the_sheet_is_brought_into_the_canvas() {
+        let _turn = take_your_turn();
+        let mut program = qymcad::LiveLoop::start();
+        step(&mut program, "ui.key", serde_json::json!({ "key": "escape" }));
+        let new_part = button(&mut program, "tb-new-part-hint");
+        step(&mut program, "ui.button", serde_json::json!({ "hint": new_part }));
+        let pencil = button(&mut program, "g-sketch-pick-hint");
+        step(&mut program, "ui.button", serde_json::json!({ "hint": pencil }));
+        step(&mut program, "ui.click", serde_json::json!({ "at": [0.0, 0.0, 0.0] }));
+        // A CIRCLE FAR FROM WHERE THE VIEW STANDS: centre 300 mm out, the radius point 100 mm further
+        step(&mut program, "sketch.circle", serde_json::json!({ "points": [[300.0, 300.0], [400.0, 300.0]] }));
+        let document = read(&mut program, |core| core.document());
+        assert_eq!(document.sketches[0].circles, 1, "the far circle did not come to stand");
+    }
+
     /// A ROW OF THE TREE IS PICKED BY ITS NAME: a second take over the same sketch needs the sketch
     /// selected again, and the agent reaches the row as the person does - its own words clicked.
     /// Reported behaviour: no gesture could select a finished sketch, so a second extrusion over
