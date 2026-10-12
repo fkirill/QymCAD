@@ -131,13 +131,16 @@ impl TheAgent {
         })
     }
 
-    /// A PICTURE OF THE MODEL, as the window draws it now - the same picture the program's own
-    /// picture-taking produces - PNG image content of the call.
-    #[tool(name = "screenshot", description = "A picture of the model as the window draws it now, the same picture the program's own picture-taking produces, as PNG image content")]
+    /// A PICTURE OF THE MODEL, as the window draws it in its viewport now - the same picture the
+    /// program's own picture-taking produces, the one its checks trust - PNG image content of the
+    /// call. Where the viewport carries nothing that could be drawn at all, the call is refused in
+    /// words.
+    #[tool(name = "screenshot", description = "A picture of the model as the window draws it now, the same picture the program's own checks trust, as PNG image content")]
     async fn screenshot(&self) -> Result<CallToolResult, rmcp::ErrorData> {
         use base64::Engine as _;
-        Ok(match the_program_answers(|core| core.snapshot().png()).await {
-            Ok(png) => CallToolResult::success(vec![ContentBlock::image(base64::engine::general_purpose::STANDARD.encode(png), "image/png")]),
+        Ok(match the_program_answers(|core| core.the_view_as_a_picture().map(|p| p.png())).await {
+            Ok(Some(png)) => CallToolResult::success(vec![ContentBlock::image(base64::engine::general_purpose::STANDARD.encode(png), "image/png")]),
+            Ok(None) => CallToolResult::error(vec![ContentBlock::text("the view stands nowhere that a picture could be taken of")]),
             Err(said) => CallToolResult::error(vec![ContentBlock::text(said)]),
         })
     }

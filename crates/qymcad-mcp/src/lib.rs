@@ -324,8 +324,16 @@ mod tests {
         let said = call_a_tool(&mut program, port, &session, "screenshot", "{}");
         assert_eq!(said["content"][0]["type"], "image", "the picture is not image content: {said}");
         use base64::Engine as _;
-        let png = base64::engine::general_purpose::STANDARD.decode(said["content"][0]["data"].as_str().expect("the picture is carried as data")).expect("the picture's data is base64");
-        assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"), "the picture's bytes are not a PNG file");
+        let the_picture = |said: &serde_json::Value| -> qymcad::Picture {
+            let data = said["content"][0]["data"].as_str().expect("the picture is carried as data");
+            let png = base64::engine::general_purpose::STANDARD.decode(data).expect("the picture's data is base64");
+            qymcad::Picture::from_png(&png).expect("the picture's bytes open as a picture")
+        };
+        /// THE PIXELS THE MODEL COVERS in a picture of the view: where the raster drew something.
+        let covered = |picture: &qymcad::Picture| picture.rgba.chunks(4).filter(|px| px[3] > 128).count();
+        let empty = the_picture(&said);
+        assert!(empty.width > 100 && empty.height > 100, "the picture of the view is of no window: {} x {}", empty.width, empty.height);
+        assert_eq!(covered(&empty), 0, "an empty program already covers pixels of its view");
         for name in ["undo", "redo"] {
             let said = call_a_tool(&mut program, port, &session, name, "{}");
             assert!(!said["isError"].as_bool().unwrap_or(true), "{name} answered as an error: {said}");
@@ -362,6 +370,24 @@ mod tests {
         assert!(!said["isError"].as_bool().unwrap_or(true), "the take of a command of the catalogue answered as an error: {said}");
         let taken = said["content"][0]["text"].as_str().expect("the take is said in words");
         assert!(taken.contains("\"outcome\"") && taken.contains("\"status\""), "the answer does not carry the frame's parts: {taken}");
+        // AND THE PICTURE IS OF WHAT THE WINDOW SHOWS: a box made by a call, the view fitted to it, and
+        // the picture covers the pixels the box stands on - the same raster the checks trust
+        let said =
+            call_a_tool(&mut program, port, &session, "call-tool", &serde_json::json!({ "name": "part.box", "parameters": { "Length X": "40", "Width Y": "30", "Height Z": "10" } }).to_string());
+        assert!(!said["isError"].as_bool().unwrap_or(true), "the box did not run: {said}");
+        let said = call_a_tool(&mut program, port, &session, "call-tool", &serde_json::json!({ "name": "view.fit", "parameters": {} }).to_string());
+        assert!(!said["isError"].as_bool().unwrap_or(true), "the fit did not run: {said}");
+        let said = call_a_tool(&mut program, port, &session, "screenshot", "{}");
+        let picture = the_picture(&said);
+        assert!(
+            (picture.width, picture.height) == (empty.width, empty.height),
+            "the picture changed its size with the model: {} x {} against {} x {}",
+            picture.width,
+            picture.height,
+            empty.width,
+            empty.height
+        );
+        assert!(covered(&picture) > 1000, "a fitted block covers only {} pixels of its view", covered(&picture));
         wish(false, port, "the-token");
     }
 }

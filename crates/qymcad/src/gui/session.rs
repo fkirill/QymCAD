@@ -1486,6 +1486,20 @@ impl AgentSession<'_> {
         Picture { width: size[0], height: size[1], rgba: img.pixels.iter().flat_map(|c| c.to_array()).collect() }
     }
 
+    /// THE VIEW AS A PICTURE: the model drawn over the viewport as it stands, by the same software
+    /// raster the program's own checks trust when they compare the window with the picture - and the
+    /// honest one for an agent too, for what the checks see is what this answers. The background is
+    /// transparent where nothing stands; `None` where the viewport carries nothing that could be
+    /// drawn at all.
+    pub fn the_view_as_a_picture(&mut self) -> Option<Picture> {
+        self.settle();
+        let ppp = self.win.ctx.pixels_per_point();
+        let basis = self.app.viewing.cam.basis();
+        let rect = self.app.viewing.view_rect;
+        let img = qymcad_render::rasterize_3d(&self.app.painting(), rect, &basis, ppp, 1.0)?;
+        Some(Picture { width: img.width() as usize, height: img.height() as usize, rgba: img.pixels.iter().flat_map(|c| c.to_array()).collect() })
+    }
+
     pub fn close_window(&mut self, title: &str) -> &mut Self {
         self.settle();
         let Some(window) = self.win.widgets.iter().find(|w| w.kind == Kind::Window && w.label == title).map(|w| w.rect) else {
