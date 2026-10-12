@@ -40,12 +40,12 @@
 - [x] 6.4 Part operations: every feature and primitive of the catalogue, datums, sketch-on-face; each with its own check
 - [x] 6.5 Assembly operations: joints of every kind, mates, relations, groups, ground, drag; each with its own check
 - [x] 6.6 Parameters, view (orbit, fit, section), measurement, import/export of every format the program offers; each with its own check
-- [ ] 6.7 The UI-driver escape hatch: the person vocabulary over `AgentSession` (press a button by hint, click a point of the sketch or of space, fill a field, walk a menu, press a key, type); check: a scenario does something with no named entry using only the escape hatch
-- [ ] 6.8 `screenshot`: `qymcad_render::rasterize_3d` of the current view as PNG image content; check: the answer's bytes open as a picture of what the window shows
+- [x] 6.7 The UI-driver escape hatch: the person vocabulary over `AgentSession` (press a button by hint, click a point of the sketch or of space, fill a field, walk a menu, press a key, type); check: a scenario does something with no named entry using only the escape hatch
+- [x] 6.8 `screenshot`: `qymcad_render::rasterize_3d` of the current view as PNG image content; check: the answer's bytes open as a picture of what the window shows
 
 ## 7. End to end
 
-- [ ] 7.1 The agent scenario, the `user_case` shape: a sketch on a face of another part -> holes -> shell -> a second part -> assembly -> a dimension edited in the middle, made wholly through MCP calls, with the invariants checked after every step
-- [ ] 7.2 The help: one article for the settings section and one for the agent, in both languages, linked from the help map; check: `help_map_flow` green
-- [ ] 7.3 The undo story: agent-created undo entries carry the agent's mark in their names; check: a scenario reads the undo list and tells the agent's steps from the person's
-- [ ] 7.4 The gate: `cargo fmt --all`, `cargo clippy --workspace --all-targets`, `cargo test --workspace` and `cargo check --workspace --all-targets`, exit codes read; the dependency ratchet shows the new gap and the decision is recorded
+- [x] 7.1 The agent scenario, the `user_case` shape: a sketch on a face of another part -> holes -> shell -> a second part -> assembly -> a dimension edited in the middle, made wholly through MCP calls, with the invariants checked after every step
+- [x] 7.2 The help: one article for the settings section and one for the agent, in both languages, linked from the help map; check: `help_map_flow` green
+- [x] 7.3 The undo story: agent-created undo entries carry the agent's mark in their names; check: a scenario reads the undo list and tells the agent's steps from the person's
+- [x] 7.4 The gate: `cargo fmt --all`, `cargo clippy --workspace --all-targets`, `cargo test --workspace` and `cargo check --workspace --all-targets`, exit codes read; the dependency ratchet shows the new gap and the decision is recorded
