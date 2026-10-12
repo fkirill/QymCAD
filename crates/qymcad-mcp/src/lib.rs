@@ -329,7 +329,7 @@ mod tests {
             let png = base64::engine::general_purpose::STANDARD.decode(data).expect("the picture's data is base64");
             qymcad::Picture::from_png(&png).expect("the picture's bytes open as a picture")
         };
-        /// THE PIXELS THE MODEL COVERS in a picture of the view: where the raster drew something.
+        // THE PIXELS THE MODEL COVERS in a picture of the view: where the raster drew something.
         let covered = |picture: &qymcad::Picture| picture.rgba.chunks(4).filter(|px| px[3] > 128).count();
         let empty = the_picture(&said);
         assert!(empty.width > 100 && empty.height > 100, "the picture of the view is of no window: {} x {}", empty.width, empty.height);

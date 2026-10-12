@@ -170,7 +170,7 @@ fn the_key_and_its_modifiers(said: &str) -> Option<(qymcad::Modifiers, qymcad::K
 fn the_key_named(said: &str) -> Option<qymcad::Key> {
     use qymcad::Key;
     let name = said.trim().to_lowercase();
-    let letters = || "abcdefghijklmnopqrstuvwxyz".chars().position(|c| Some(c) == name.chars().next());
+    let letters = || "abcdefghijklmnopqrstuvwxyz".chars().position(|c| name.starts_with(c));
     let digits = || "0123456789".find(&name);
     let f_keys = || name.strip_prefix('f').and_then(|n| n.parse::<u8>().ok()).filter(|n| (1..=12).contains(n));
     Some(match name.as_str() {
