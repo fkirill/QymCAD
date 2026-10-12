@@ -1062,6 +1062,13 @@ impl AgentSession<'_> {
         self.click(at)
     }
 
+    /// CLICK THE SKETCH'S SHEET with modifiers held, as a person gathers a selection: the place
+    /// given is clicked with Shift held, and whatever stands there is added to the selection.
+    pub fn click_on_sketch_holding_shift(&mut self, x: f64, y: f64) -> &mut Self {
+        let at = self.on_sketch(x, y);
+        self.click_with(at, PointerButton::Primary, Modifiers { shift: true, ..Modifiers::default() })
+    }
+
     /// CLICK THE FLAT SHEET wherever it stands - a sketch being drawn, or a tool's bar waiting over
     /// a finished one (the extrude picking its contours): the click lands where the person's would,
     /// and whoever listens on the canvas takes it.

@@ -5,7 +5,7 @@
 //! viewcube clicked, the table of parameters filled row by row, the file doors a chooser's answer runs
 //! through. The agent's file operations carry their path and put no chooser up, as the spec of the
 //! server says.
-use crate::registry::{the_same_kind, the_words_of, Answered, Run, Take};
+use crate::registry::{the_open_sketch, the_places, the_same_kind, the_words_of, Answered, Run, Take};
 
 /// ONE OPERATION OF THE WHOLE PROGRAM, as the agent calls it by name - and one gesture of the
 /// person's own vocabulary, which the UI-driver escape hatch serves in the same shape.
@@ -48,6 +48,14 @@ pub(crate) const THE_OPERATIONS_OF_THE_PROGRAM: &[General] = &[
         synonyms: &["step", "iges", "stl", "obj", "ply", "glb", "gltf", "3mf", "amf", "write"],
         run: write_the_model_out,
         takes: &[Take { name: "format", kind: "text" }, Take { name: "path", kind: "text" }],
+    },
+    General {
+        code: "sketch.constrain",
+        article: "general/15-agent",
+        name_key: "mcp-constrain",
+        synonyms: &["tie", "join", "constrain"],
+        run: lay_a_constraint,
+        takes: &[Take { name: "kind", kind: "text" }, Take { name: "points", kind: "points" }],
     },
     General {
         code: "file.export-sketch",
@@ -301,6 +309,65 @@ fn write_the_sketch_out(core: &mut qymcad::AgentSession, _code: &str, given: &se
         Ok(file) if file.len() > 0 => Answered::Ran(format!("the sketch {sketch} drawn out to {path} ({} bytes)", file.len())),
         _ => Answered::Refused(format!("nothing was written to {path}: {}", core.status())),
     }
+}
+
+/// LAY A CONSTRAINT of the kind the call names, over the places it lists on the sheet of the open
+/// sketch: the first place selects what stands there, each one after is taken with Shift held -
+/// gathered into the selection, as a person gathers entities - and the constraint panel's own
+/// button of the kind presses it. The sketch holds one constraint more after it and its degrees of
+/// freedom stand at least one fewer; what the panel refuses - a kind the selection cannot take -
+/// is the program's own refusal. This is how a sketch transferred from another program keeps its
+/// own constraint net rather than the luck of drawn clicks.
+fn lay_a_constraint(core: &mut qymcad::AgentSession, _code: &str, given: &serde_json::Value) -> Answered {
+    let Some(kind) = the_words_of(given, "kind") else {
+        return Answered::Refused(
+            "the constraint needs its kind, by the panel's own word: Coincident, Horizontal, Vertical, Parallel, Perpendicular, Equal, Fix, Collinear, Concentric, Tangent, Symmetric, Midpoint".into(),
+        );
+    };
+    let Some(hint) = the_panel_hint_of(&kind) else {
+        return Answered::Refused(format!(
+            "{kind}: no constraint of the panel reads so; the kinds are: Coincident, Horizontal, Vertical, Parallel, Perpendicular, Equal, Fix, Collinear, Concentric, Tangent, Symmetric, Midpoint"
+        ));
+    };
+    let Some(places) = the_places(given) else { return Answered::Refused("the constraint needs its places on the sheet, two at least".into()) };
+    let Some(before) = the_open_sketch(core) else { return Answered::Refused("no sketch is open to constrain - open one and constrain again".to_string()) };
+    let took = places.len();
+    let mut places = places.into_iter();
+    let Some((x, y)) = places.next() else { return Answered::Refused("the constraint needs its places on the sheet, two at least".into()) };
+    // a drawing tool in hand would take the clicks as its own places: put it down first, as a
+    // person does before gathering a selection
+    core.key(qymcad::Key::Escape);
+    core.click_on_sketch(x, y);
+    for (x, y) in places {
+        core.click_on_sketch_holding_shift(x, y);
+    }
+    let shown = core.word(hint);
+    core.press_hint(&shown);
+    let Some(after) = the_open_sketch(core) else { return Answered::Refused("the sketch closed under the constraint".into()) };
+    if after.constraints > before.constraints && after.dof < before.dof {
+        return Answered::Ran(format!("a {} laid over {} place(s) of {}; the sketch holds {} constraints and {} degrees of freedom", kind, took, after.name, after.constraints, after.dof));
+    }
+    Answered::Refused(format!("nothing was laid: {}", core.status()))
+}
+
+/// THE PANEL'S OWN HINT WORD of a constraint kind, as the person's panel shows it; `None` when no
+/// kind of the panel reads so.
+fn the_panel_hint_of(kind: &str) -> Option<&'static str> {
+    Some(match kind.trim() {
+        "Coincident" => "con-coincident-hint",
+        "Horizontal" => "con-horizontal-hint",
+        "Vertical" => "con-vertical-hint",
+        "Parallel" => "con-parallel-hint",
+        "Perpendicular" => "con-perpendicular-hint",
+        "Equal" => "con-equal",
+        "Fix" => "con-fix",
+        "Collinear" => "con-collinear-hint",
+        "Concentric" => "con-concentric-hint",
+        "Tangent" => "con-tangent-hint",
+        "Symmetric" => "con-symmetric-hint",
+        "Midpoint" => "con-midpoint-hint",
+        _ => return None,
+    })
 }
 
 #[cfg(test)]

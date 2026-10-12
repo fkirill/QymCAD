@@ -439,7 +439,7 @@ fn draw_a_rectangle(core: &mut qymcad::AgentSession, code: &str, given: &serde_j
 }
 
 /// THE SKETCH OPEN FOR EDITING, with its counts of what a drawing adds to; `None` when none is open.
-fn the_open_sketch(core: &mut qymcad::AgentSession) -> Option<qymcad::SketchInfo> {
+pub(crate) fn the_open_sketch(core: &mut qymcad::AgentSession) -> Option<qymcad::SketchInfo> {
     let document = core.document();
     let name = document.editing.clone()?;
     document.sketches.iter().find(|s| s.name == name).cloned()
@@ -1280,7 +1280,7 @@ fn fill_the_fields(core: &mut qymcad::AgentSession, given: &serde_json::Value) {
 
 /// THE PLACES A CALL CARRIES, read as pairs of the sheet; `None` when the call carried none or a
 /// malformed list - the validation has said so in words already, and the run refuses what is left.
-fn the_places(given: &serde_json::Value) -> Option<Vec<(f64, f64)>> {
+pub(crate) fn the_places(given: &serde_json::Value) -> Option<Vec<(f64, f64)>> {
     the_pairs(given.get("points")?)
 }
 

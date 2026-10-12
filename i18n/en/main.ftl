@@ -2775,6 +2775,7 @@ mcp-ui-button = Press a button
 mcp-ui-click = Click a place
 mcp-ui-pick = Pick a row of the tree
 mcp-ui-open = Open a row of the tree
+mcp-constrain = Lay a constraint
 mcp-ui-field = Fill a field
 mcp-ui-menu = Walk a menu
 mcp-ui-key = Press a key

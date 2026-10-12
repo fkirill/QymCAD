@@ -535,6 +535,39 @@ mod tests {
         assert_eq!(document.parts.len(), 2, "the edit lost a part");
     }
 
+    /// A CONSTRAINT IS LAID over the places the call names: a ring drawn as four lines with one
+    /// corner left open - the endpoints half a millimetre apart - is tied by a Coincident, the
+    /// sketch holds one more constraint and fewer degrees of freedom, and the profile that stood
+    /// open extrudes. Reported behaviour: no operation of the agent could lay a constraint, so a
+    /// sketch brought over from another program kept its open corners and never closed.
+    #[test]
+    fn a_constraint_is_laid_over_the_places_the_call_names() {
+        let _turn = take_your_turn();
+        let mut program = qymcad::LiveLoop::start();
+        step(&mut program, "ui.key", serde_json::json!({ "key": "escape" }));
+        let new_part = button(&mut program, "tb-new-part-hint");
+        step(&mut program, "ui.button", serde_json::json!({ "hint": new_part }));
+        let pencil = button(&mut program, "g-sketch-pick-hint");
+        step(&mut program, "ui.button", serde_json::json!({ "hint": pencil }));
+        step(&mut program, "ui.click", serde_json::json!({ "at": [0.0, 0.0, 0.0] }));
+        // A RING OF FOUR LINES, one corner open by half a millimetre
+        step(&mut program, "sketch.line", serde_json::json!({ "points": [[10.0, 10.0], [30.0, 10.0]] }));
+        step(&mut program, "sketch.line", serde_json::json!({ "points": [[30.4, 10.4], [30.4, 30.4]] }));
+        step(&mut program, "sketch.line", serde_json::json!({ "points": [[30.0, 30.0], [10.0, 30.0]] }));
+        step(&mut program, "sketch.line", serde_json::json!({ "points": [[10.0, 30.0], [10.0, 10.0]] }));
+        let before = read(&mut program, |core| {
+            let s = &core.document().sketches[0];
+            (s.constraints, s.dof)
+        });
+        step(&mut program, "sketch.constrain", serde_json::json!({ "kind": "Coincident", "points": [[30.0, 10.0], [30.4, 10.4]] }));
+        let after = read(&mut program, |core| {
+            let s = &core.document().sketches[0];
+            (s.constraints, s.dof)
+        });
+        assert!(after.0 > before.0, "no constraint came to stand: {before:?} -> {after:?}");
+        assert!(after.1 < before.1, "the degrees of freedom did not fall: {before:?} -> {after:?}");
+    }
+
     /// A ROW OF THE TREE OPENS BY ITS NAME: a sketch's row is double-clicked to edit it again, and
     /// two calls of a pick are two clicks too far apart to be one - the double click runs inside the
     /// one call, as the person's double click does. Without it a layered part - a second extrusion
