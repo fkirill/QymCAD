@@ -119,6 +119,13 @@ pub const COMMANDS: &[Command] = &[
     // ── Assembly ────────────────────────────────────────────────────────────────────────────
     Command { code: "assembly.joint", workbench: "assembly", launch: Launch::Action("joint"), name_key: "" },
     Command { code: "assembly.ground", workbench: "assembly", launch: Launch::Action("ground"), name_key: "cmdname-ground" },
+    // THE MATES THAT ARE NO JOINT: a name of its own for each, for they share one article with the
+    // joint - the name is the word the undo step and the list of mates already say (a "Group" stands
+    // among them), so the search names them as the program itself does
+    Command { code: "assembly.group", workbench: "assembly", launch: Launch::Action("group"), name_key: "j-group-made" },
+    Command { code: "assembly.width", workbench: "assembly", launch: Launch::Action("width"), name_key: "j-width-made" },
+    Command { code: "assembly.tangent", workbench: "assembly", launch: Launch::Action("tangent"), name_key: "j-tangent-made" },
+    Command { code: "assembly.relation", workbench: "assembly", launch: Launch::Action("relation"), name_key: "j-relation-made" },
     // one of the several bodies a part shows made a part of its own; the right button on it does the same
     Command { code: "part.piece-to-part", workbench: "part", launch: Launch::Action("piece"), name_key: "act-piece-to-part" },
 ];
@@ -165,6 +172,10 @@ impl Command {
             Launch::ClickOp(n) => crate::help_map::sketch_article("click", n),
             Launch::Modify(tool) => crate::help_map::sketch_article("mod", tool.code()),
             Launch::Action("joint") => crate::help_map::assembly_article("asm.joint"),
+            Launch::Action("group") => crate::help_map::assembly_article("asm.group"),
+            Launch::Action("width") => crate::help_map::assembly_article("asm.width"),
+            Launch::Action("tangent") => crate::help_map::assembly_article("asm.tangent"),
+            Launch::Action("relation") => crate::help_map::assembly_article("asm.relation"),
             Launch::Action("piece") => Some("part/13-split-body"),
             Launch::Action(_) => None,
         }

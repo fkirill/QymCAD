@@ -27,31 +27,12 @@
 pub(crate) use qymcad_pick::{infer_axis_anchor, infer_mate_anchor};
 use super::App;
 use egui::{Pos2, Rect};
-use qymcad_core::feature::AnchorRef;
-use qymcad_core::model::Id;
+
+// THE INFERENCE ITSELF (`infer_axis_anchor`, `infer_mate_anchor`) is re-exported above and called
+// straight with `&self.painting()`: it belongs to the picking crate, and a wrapper for it here was
+// only more of the god object.
 
 impl App {
-    /// THE DIRECTION UNDER THE CURSOR — for "point at the axis", the second pick.
-    ///
-    /// The rule is the same as for the anchor: what is pointed at is what is UNDER THE CURSOR. There
-    /// used to be an order of its own here — `pick_edge_any` over the whole frame first, then the face
-    /// — and it took the edge of ANY part as long as it came out closer to the cursor on screen.
-    /// Reported behaviour: pointing at a rail guide that runs along the horizon drew the axis along Z.
-    /// A measurement: the cursor was over body 18 while the edge belonged to body 6, a neighbour.
-    ///
-    /// An edge is preferred to a face: when showing an axis, a person aims at something extended.
-    pub(super) fn infer_axis_anchor(&self, rect: Rect, pos: Pos2) -> Option<(Id, AnchorRef)> {
-        infer_axis_anchor(&self.painting(), rect, pos)
-    }
-
-    /// THE ANCHOR UNDER THE CURSOR: the body and what was caught on it.
-    ///
-    /// `None` means there is no part under the cursor; only the caller has the right to call that a
-    /// miss, and the caller is also the one who says so in words.
-    pub(super) fn infer_mate_anchor(&self, rect: Rect, pos: Pos2) -> Option<(Id, AnchorRef)> {
-        infer_mate_anchor(&self.painting(), rect, pos)
-    }
-
     /// A click on the frame while choosing a mate anchor: infer the anchor and take it.
     pub(super) fn joint_pick_inferred_click(&mut self, rect: Rect, pos: Pos2) {
         // "BY ORIGINS" is not a way of pointing but a deliberate choice of A DIFFERENT anchor: the
@@ -64,7 +45,7 @@ impl App {
             }
             return;
         }
-        match self.infer_mate_anchor(rect, pos) {
+        match infer_mate_anchor(&self.painting(), rect, pos) {
             Some((body, anchor)) => qymcad_assembly::joint_pick_anchor_at(&mut self.joint_ctx(), body, anchor),
             None => self.status = crate::i18n::tr("vp-miss-face-cancel"),
         }
@@ -72,7 +53,7 @@ impl App {
 
     /// A click on the frame while RE-CHOOSING the anchor of a finished joint — the same inference.
     pub(super) fn joint_repick_inferred_click(&mut self, rect: Rect, pos: Pos2) {
-        match self.infer_mate_anchor(rect, pos) {
+        match infer_mate_anchor(&self.painting(), rect, pos) {
             Some((body, anchor)) => qymcad_assembly::joint_edit_repick_apply(&mut self.joint_ctx(), body, anchor),
             None => self.status = crate::i18n::tr("vp-miss-face-cancel"),
         }
@@ -83,6 +64,7 @@ impl App {
 mod tests {
     use super::super::hand::Hand;
     use super::super::App;
+    use super::infer_mate_anchor;
     use qymcad_core::feature::{AnchorRef, JointKind};
     use qymcad_core::model::Id;
 
@@ -127,7 +109,7 @@ mod tests {
             .iter()
             .map(|(what, w)| {
                 let p = at(&app, *w);
-                let (_, a) = app.infer_mate_anchor(viewport(), p).unwrap_or_else(|| panic!("nothing was inferred under the cursor at {what}"));
+                let (_, a) = infer_mate_anchor(&app.painting(), viewport(), p).unwrap_or_else(|| panic!("nothing was inferred under the cursor at {what}"));
                 (*what, a)
             })
             .collect();

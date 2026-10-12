@@ -114,6 +114,10 @@ impl App {
             Launch::Modify(n) => qymcad_ui_state::modify_button(qymcad_ui_state::editing_of!(self), &mut qymcad_ui_state::tools_of!(self), self.sk_pat, &self.tool_prefs, n),
             Launch::Action("joint") => self.start_joint_pick(),
             Launch::Action("ground") => self.start_ground_pick(),
+            Launch::Action("group") => self.start_group_pick(),
+            Launch::Action("width") => self.start_width_pick(),
+            Launch::Action("tangent") => self.start_tangent_pick(),
+            Launch::Action("relation") => self.start_relation_pick(),
             Launch::Action(a) => crate::gui::piece_part::from_search(frame, &mut self.part_ctx(), a),
         }
     }

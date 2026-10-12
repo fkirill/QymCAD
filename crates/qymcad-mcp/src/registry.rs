@@ -104,8 +104,11 @@ fn checked_against(given: &serde_json::Value, fields: &[Parameter], takes: &[Tak
         if take.kind == "picks" && !the_triples(Some(value)).is_some_and(|p| !p.is_empty()) {
             return Err(format!("{name} takes places in the space of the model as [x, y, z] triples, and the call carried {value}"));
         }
-        if take.kind == "sketches" && !the_sketch_names(Some(value)).is_some_and(|s| s.len() >= 2) {
+        if take.kind == "sketches" && !the_names_of(Some(value)).is_some_and(|s| s.len() >= 2) {
             return Err(format!("{name} takes the names of finished sketches of the tree, two at least, and the call carried {value}"));
+        }
+        if take.kind == "joints" && !the_names_of(Some(value)).is_some_and(|s| s.len() >= 2) {
+            return Err(format!("{name} takes the names of the joints of the list of mates, two at least, and the call carried {value}"));
         }
     }
     for take in takes {
@@ -119,7 +122,18 @@ fn checked_against(given: &serde_json::Value, fields: &[Parameter], takes: &[Tak
 /// THE SYNONYMS OF THE REGISTRY'S OWN, by command code: words a client looks for an operation by that
 /// neither its code nor its names in any language carry (`fillet` by `round`). The registry is derived;
 /// this is the one supplement it takes, and every word here must name its command's code.
-const SYNONYMS: &[(&str, &[&str])] = &[("part.fillet", &["round", "rounding"]), ("part.chamfer", &["bevel"]), ("part.shell", &["hollow"]), ("part.hole", &["drill", "bore"])];
+const SYNONYMS: &[(&str, &[&str])] = &[
+    ("part.fillet", &["round", "rounding"]),
+    ("part.chamfer", &["bevel"]),
+    ("part.shell", &["hollow"]),
+    ("part.hole", &["drill", "bore"]),
+    ("assembly.joint", &["mate", "mates", "fasten", "hinge"]),
+    ("assembly.ground", &["anchor", "fix"]),
+    ("assembly.group", &["weld"]),
+    ("assembly.tangent", &["touch"]),
+    ("assembly.width", &["midway"]),
+    ("assembly.relation", &["gear", "rack", "screw", "linear"]),
+];
 
 /// ONE OPERATION OF THE PROGRAM, as the agent calls it by name.
 pub(crate) struct Entry {
@@ -265,6 +279,12 @@ const RICHER_RUNS: &[Wired] = &[
     Wired { code: "part.datum-plane", run: stand_a_datum, takes: &[Take { name: "picks", kind: "picks" }] },
     Wired { code: "part.datum-axis", run: stand_a_datum, takes: &[Take { name: "picks", kind: "picks" }] },
     Wired { code: "part.datum-point", run: stand_a_datum, takes: &[] },
+    Wired { code: "assembly.joint", run: lay_a_joint, takes: &[Take { name: "kind", kind: "text" }, Take { name: "picks", kind: "picks" }] },
+    Wired { code: "assembly.ground", run: ground_a_part, takes: &[Take { name: "picks", kind: "picks" }] },
+    Wired { code: "assembly.group", run: hold_the_parts_together, takes: &[Take { name: "picks", kind: "picks" }] },
+    Wired { code: "assembly.tangent", run: rest_a_shaft_on_the_face, takes: &[Take { name: "picks", kind: "picks" }] },
+    Wired { code: "assembly.width", run: sit_the_part_between_the_walls, takes: &[Take { name: "picks", kind: "picks" }] },
+    Wired { code: "assembly.relation", run: tie_the_mates_together, takes: &[Take { name: "joints", kind: "joints" }] },
 ];
 
 /// DRAW A CHAIN OF LINES: the tool taken, every place of the sheet clicked in turn, the chain ended as a
@@ -774,7 +794,7 @@ fn tilt_a_face(core: &mut qymcad::AgentSession, code: &str, given: &serde_json::
 fn work_from_the_sketches(core: &mut qymcad::AgentSession, code: &str, given: &serde_json::Value) -> Answered {
     let Some(entry) = by_code(code) else { return Answered::Refused(format!("{code}: no operation of the program is named so")) };
     let kind = if code == "part.loft" { "Loft" } else { "Sweep" };
-    let Some(names) = the_sketch_names(given.get("sketches")) else {
+    let Some(names) = the_names_of(given.get("sketches")) else {
         return Answered::Refused(format!("the {} needs the names of the sketches it works from: the profile then the path, or each section in its turn", entry.command.name()));
     };
     let Some((first, rest)) = names.split_first() else {
@@ -841,9 +861,198 @@ fn stand_a_datum(core: &mut qymcad::AgentSession, code: &str, given: &serde_json
     }
 }
 
-/// THE SKETCH NAMES A VALUE HOLDS: finished sketches of the tree, each a string; `None` at the first
-/// thing that is not one.
-fn the_sketch_names(value: Option<&serde_json::Value>) -> Option<Vec<String>> {
+/// THE KINDS A JOINT COMES IN, as the bar's own list names them: the key of each kind's word, and the
+/// name the document reads the joint by. A call's kind is matched against both, as the program's own
+/// names match - case, dashes and spaces aside - so "Pin slot", "pin-slot" and "PinSlot" name one kind.
+const JOINT_KINDS: &[(&str, &str)] = &[
+    ("joint-kind-rigid", "Rigid"),
+    ("joint-kind-revolute", "Revolute"),
+    ("joint-kind-slider", "Slider"),
+    ("joint-kind-cylindrical", "Cylindrical"),
+    ("joint-kind-planar", "Planar"),
+    ("joint-kind-ball", "Ball"),
+    ("joint-kind-pin-slot", "PinSlot"),
+    ("joint-kind-parallel", "Parallel"),
+];
+
+/// THE WORDS OF A KIND, matched as the program matches its own names: case, dashes and spaces aside.
+fn the_same_kind(a: &str, b: &str) -> bool {
+    let squeeze = |w: &str| w.to_lowercase().replace(['-', ' ', '_'], "");
+    squeeze(a) == squeeze(b)
+}
+
+/// LAY A JOINT OF ANY KIND between two parts: the command taken, the kind chosen in the bar's own
+/// list (opened and its word pressed, as a person chooses), an anchor clicked on each part - the
+/// program infers the anchor from where the click lands, a face's centre here - Enter keeping the
+/// joint the second click laid, Esc putting the tool down. The joint stands in the list afterwards,
+/// of the kind asked for and holding; the first part becomes the anchor the second is held against.
+/// A kind no joint comes in, or picks that name no face of the parts, is the program's own refusal,
+/// and nothing changed.
+fn lay_a_joint(core: &mut qymcad::AgentSession, code: &str, given: &serde_json::Value) -> Answered {
+    let Some(entry) = by_code(code) else { return Answered::Refused(format!("{code}: no operation of the program is named so")) };
+    let Some(picks) = the_triples(given.get("picks")) else {
+        return Answered::Refused(format!("the {} needs its places in the space of the model: an anchor on each of the two parts", entry.command.name()));
+    };
+    let [a, b, ..] = picks.as_slice() else {
+        return Answered::Refused("the joint needs two places: an anchor on part A, then on part B".into());
+    };
+    let Some(asked) = the_words_of(given, "kind") else {
+        return Answered::Refused(format!("the joint needs the kind it is to hold: one of {}", JOINT_KINDS.iter().map(|(_, name)| *name).collect::<Vec<_>>().join(", ")));
+    };
+    let Some((key, _)) = JOINT_KINDS.iter().find(|(key, name)| the_same_kind(name, &asked) || the_same_kind(&core.word(key), &asked)) else {
+        return Answered::Refused(format!("{asked}: no joint of the program comes in that kind; the kinds are {}", JOINT_KINDS.iter().map(|(_, name)| *name).collect::<Vec<_>>().join(", ")));
+    };
+    let wanted = core.word(key);
+    let before = core.document().joints.len();
+    take_the_command(core, entry.command);
+    core.settle(); // the take lands the tool a frame later; the bar stands before its list is opened
+    let caption = core.word("j-kind");
+    let list = core.field(&caption);
+    core.click(list.rect.center());
+    core.press_word_near(&wanted, list.rect.center());
+    let at = core.face_at(*a);
+    core.click(at);
+    let at = core.face_at(*b);
+    core.click(at);
+    core.key(qymcad::Key::Enter);
+    core.key(qymcad::Key::Escape);
+    let document = core.document();
+    match document.joints.get(before) {
+        Some(joint) if the_same_kind(&joint.kind, &asked) && !joint.violated => Answered::Ran(format!("a {} joint made ({}), part B held to part A", joint.kind, joint.name)),
+        Some(joint) if joint.violated => Answered::Refused(format!("the {} joint does not hold: {}", joint.kind, core.status())),
+        _ => Answered::Refused(format!("no joint was laid: {}", core.status())),
+    }
+}
+
+/// GROUND A PART where it stands: the command taken, the part clicked - one click fixes it, the
+/// anchor the other parts are placed against - the tool put down with Esc (what the click fixed
+/// stays fixed). The part stands grounded in the tree afterwards; a click that names no part is the
+/// program's own refusal, and nothing changed.
+fn ground_a_part(core: &mut qymcad::AgentSession, code: &str, given: &serde_json::Value) -> Answered {
+    let Some(entry) = by_code(code) else { return Answered::Refused(format!("{code}: no operation of the program is named so")) };
+    let Some(picks) = the_triples(given.get("picks")) else {
+        return Answered::Refused(format!("the {} needs its place in the space of the model: on the part to fix", entry.command.name()));
+    };
+    let [on, ..] = picks.as_slice() else {
+        return Answered::Refused("the grounding needs one place: on the part to fix".into());
+    };
+    let before = core.document().parts.iter().filter(|p| p.grounded).count();
+    take_the_command(core, entry.command);
+    core.settle(); // the take lands the tool a frame later; the click lands on what it waits for
+    let at = core.face_at(*on);
+    core.click(at);
+    core.key(qymcad::Key::Escape);
+    let document = core.document();
+    let grounded = document.parts.iter().filter(|p| p.grounded).count();
+    if grounded > before {
+        Answered::Ran(format!("the part under ({}, {}, {}) fixed where it stands, the anchor of the assembly", on[0], on[1], on[2]))
+    } else {
+        Answered::Refused(format!("nothing was fixed: {}", core.status()))
+    }
+}
+
+/// HOLD THE PARTS TOGETHER where they stand - a group: the command taken, every part clicked in its
+/// turn, Enter. The group stands among the mates afterwards, and no joint was laid; picks that name
+/// no face of the parts are the program's own refusal, and nothing changed.
+fn hold_the_parts_together(core: &mut qymcad::AgentSession, code: &str, given: &serde_json::Value) -> Answered {
+    let Some(entry) = by_code(code) else { return Answered::Refused(format!("{code}: no operation of the program is named so")) };
+    let Some(picks) = the_triples(given.get("picks")) else {
+        return Answered::Refused(format!("the {} needs its places in the space of the model: on each part to hold, two at least", entry.command.name()));
+    };
+    if picks.len() < 2 {
+        return Answered::Refused("the group needs the parts it holds, two at least".into());
+    }
+    the_mates_of_a_clicking_tool(core, entry.command, &picks, "Group", "the parts held together where they stand (a Group mate)")
+}
+
+/// REST A SHAFT ON A FACE - a tangent: the command taken, the plane clicked, then the round side of
+/// the shaft, Enter. The shaft comes to rest on the face, the distance between them its radius, and
+/// the tangent stands among the mates; picks that name no plane and no cylinder are the program's
+/// own refusal, and nothing changed.
+fn rest_a_shaft_on_the_face(core: &mut qymcad::AgentSession, code: &str, given: &serde_json::Value) -> Answered {
+    let Some(entry) = by_code(code) else { return Answered::Refused(format!("{code}: no operation of the program is named so")) };
+    let Some(picks) = the_triples(given.get("picks")) else {
+        return Answered::Refused(format!("the {} needs its places in the space of the model: the plane, then the round side of the shaft", entry.command.name()));
+    };
+    if picks.len() != 2 {
+        return Answered::Refused("the tangent needs two places: the plane, then the round side of the shaft".into());
+    }
+    the_mates_of_a_clicking_tool(core, entry.command, &picks, "Tangent", "the shaft rests on the face (a Tangent mate)")
+}
+
+/// SIT A PART BETWEEN TWO WALLS - a width: the command taken, the two walls clicked, then the part
+/// between them, Enter. The part comes to stand midway, and the width stands among the mates; picks
+/// that name no walls are the program's own refusal, and nothing changed.
+fn sit_the_part_between_the_walls(core: &mut qymcad::AgentSession, code: &str, given: &serde_json::Value) -> Answered {
+    let Some(entry) = by_code(code) else { return Answered::Refused(format!("{code}: no operation of the program is named so")) };
+    let Some(picks) = the_triples(given.get("picks")) else {
+        return Answered::Refused(format!("the {} needs its places in the space of the model: the two walls, then the part between them", entry.command.name()));
+    };
+    if picks.len() != 3 {
+        return Answered::Refused("the width needs three places: the two walls, then the part between them".into());
+    }
+    the_mates_of_a_clicking_tool(core, entry.command, &picks, "Width", "the part sits midway between the walls (a Width mate)")
+}
+
+/// THE SHARED BODY OF THE MATES THAT CLICK THEIR PARTS: the command taken, every place clicked in
+/// its turn, Enter. The mate of `kind` stands among the document's mates afterwards - said in its
+/// own words when it came to be, refused in the program's own words when it did not.
+fn the_mates_of_a_clicking_tool(core: &mut qymcad::AgentSession, command: &qymcad::Command, picks: &[[f64; 3]], kind: &str, made: &str) -> Answered {
+    let before = core.document().mates.iter().filter(|m| *m == kind).count();
+    take_the_command(core, command);
+    core.settle(); // the take lands the tool a frame later; the clicks land on what it waits for
+    for p in picks {
+        let at = core.face_at(*p);
+        core.click(at);
+    }
+    core.key(qymcad::Key::Enter);
+    let document = core.document();
+    if document.mates.iter().filter(|m| *m == kind).count() > before {
+        Answered::Ran(made.to_string())
+    } else {
+        Answered::Refused(format!("nothing was tied: {}", core.status()))
+    }
+}
+
+/// TIE THE MATES TOGETHER - a relation: the command taken, the rows of the joints it ties clicked in
+/// the list of mates, Enter. A gear relation stands among the mates afterwards, keeping the turns of
+/// the two in step; names the list does not hold are refused in words that say what the list holds.
+fn tie_the_mates_together(core: &mut qymcad::AgentSession, code: &str, given: &serde_json::Value) -> Answered {
+    let Some(entry) = by_code(code) else { return Answered::Refused(format!("{code}: no operation of the program is named so")) };
+    let Some(names) = the_names_of(given.get("joints")) else {
+        return Answered::Refused(format!("the {} needs the names of the joints it ties, two at least", entry.command.name()));
+    };
+    if names.len() < 2 {
+        return Answered::Refused("the relation needs the joints it ties, two at least".into());
+    }
+    let held: Vec<String> = core.document().joints.iter().map(|j| j.name.clone()).collect();
+    for name in &names {
+        if !held.contains(name) {
+            return Answered::Refused(format!("no joint named {name:?} is in the list of mates; the list holds {held:?}"));
+        }
+    }
+    let before = core.document().mates.iter().filter(|m| *m == "Gear").count();
+    take_the_command(core, entry.command);
+    core.settle(); // the take lands the tool a frame later; the rows click into what it waits for
+    for name in &names {
+        let Some(row) = core.find(name, qymcad::pos2(1100.0, 600.0)) else {
+            core.key(qymcad::Key::Escape);
+            return Answered::Refused(format!("the joint named {name:?} has no row in the list of mates; the list holds {held:?}"));
+        };
+        core.click(row.center());
+    }
+    core.key(qymcad::Key::Enter);
+    let document = core.document();
+    if document.mates.iter().filter(|m| *m == "Gear").count() > before {
+        Answered::Ran(format!("a Gear relation made, tying {} to {}", names[0], names[1]))
+    } else {
+        Answered::Refused(format!("nothing was tied: {}", core.status()))
+    }
+}
+
+/// THE NAMES A VALUE HOLDS: finished sketches of the tree, joints of the list of mates - each a
+/// string; `None` at the first thing that is not one.
+fn the_names_of(value: Option<&serde_json::Value>) -> Option<Vec<String>> {
     value?.as_array()?.iter().map(|s| Some(s.as_str()?.to_string())).collect()
 }
 
@@ -1088,6 +1297,7 @@ pub(crate) fn parameters(core: &mut qymcad::AgentSession, code: &str) -> Vec<Par
             "points" => "places on the sheet of the open sketch, each an [x, y] pair".to_string(),
             "picks" => "places in the space of the model, each an [x, y, z] triple naming what stands there".to_string(),
             "sketches" => "the names of finished sketches of the tree, in the order the tool takes them".to_string(),
+            "joints" => "the names of the joints of the list of mates, in the order the tool ties them".to_string(),
             _ => String::new(),
         },
     }));
@@ -1246,9 +1456,9 @@ mod tests {
         let _turn = crate::checks::take_your_turn();
         // ON A BARE START every run answers in words - the take lands the commands that need nothing,
         // and a run that needs what is not there (a drawing with no sketch open) refuses in the
-        // program's own words. The part features have left this phase as their runs grew their own
-        // takes - their picks and sketches - so the floor stands at what is left: the primitives, the
-        // contour features, the actions and the queries
+        // program's own words. The part features and the assembly mates have left this phase as their
+        // runs grew their own takes - their picks and sketches - so the floor stands at what is left:
+        // the primitives, the contour features, the actions and the queries
         let mut program = qymcad::LiveLoop::start();
         let mut landed = 0;
         for entry in the_registry().iter().filter(|e| e.takes.is_empty()) {
@@ -1272,7 +1482,7 @@ mod tests {
             };
             assert!(!said.is_empty(), "{} said nothing when it ran", entry.command.code);
         }
-        assert!(landed >= 9, "only {landed} of the take-only commands landed their tool on a bare start; the runs have gone mute");
+        assert!(landed >= 7, "only {landed} of the take-only commands landed their tool on a bare start; the runs have gone mute");
         // OVER AN OPEN SKETCH every run that takes parameters runs with what its own work needs: the
         // drawing tools with places of their own aside of the ones before, the operations that work on
         // what stands with a fixture the registry's own calls draw for them beside those places
@@ -1564,6 +1774,20 @@ mod tests {
             })
             .expect("the call answered");
             assert!(matches!(answered, TheCall::Answered { .. }), "{code} worked nothing over its sketches: {answered:?}");
+        }
+        // OVER THE ASSEMBLY the mates run: fixtures of parts built through the registry's own calls
+        // (a part made, a rectangle drawn and grown, the part finished - a second beside it, a shaft,
+        // walls with a tab, hinges laid as a person lays them), each mate's own picks or joint names
+        // carried as the call carries them.
+        for code in ["assembly.joint", "assembly.ground", "assembly.group", "assembly.tangent", "assembly.width", "assembly.relation"] {
+            let mut program = qymcad::LiveLoop::start();
+            let answered = crate::checks::ask_the_core(&mut program, move |core| {
+                the_fixture_of_the_mates(core, code);
+                let given = the_sample_of_the_mates(core, code);
+                call(core, code, &given)
+            })
+            .expect("the call answered");
+            assert!(matches!(answered, TheCall::Answered { .. }), "{code} tied nothing over its fixture: {answered:?}");
         }
     }
 
@@ -2587,6 +2811,134 @@ mod tests {
         .expect("the call answered")
     }
 
+    /// THE BLOCK IN THE FIRST PART, the part finished: the assembly open around it, nothing grounded.
+    /// Everything the mates are laid over is built from this, through the registry's own calls.
+    fn the_block_in_the_assembly(core: &mut qymcad::AgentSession) {
+        the_first_part_of(core, |core| {
+            call(core, "sketch.rect", &serde_json::json!({ "points": [[0.0, 0.0], [40.0, 30.0]] }));
+        });
+    }
+
+    /// THE FIRST PART FROM THE START SCREEN, its drawing drawn by the call the `draw` closure makes
+    /// and grown 10 by the extrude call, the part finished into the assembly around it.
+    fn the_first_part_of(core: &mut qymcad::AgentSession, draw: impl FnOnce(&mut qymcad::AgentSession)) {
+        let new_part = core.word("start-new-part");
+        core.press_word(&new_part);
+        let xy = core.word("plane-xy-table");
+        core.press_word(&xy);
+        draw(core);
+        let finish = core.word("wb-finish");
+        core.press_word_near(&finish, qymcad::pos2(0.0, 0.0));
+        call(core, "part.extrude", &serde_json::json!({ "Length": "10" }));
+        core.press_word_near(&finish, qymcad::pos2(0.0, 0.0));
+    }
+
+    /// A PART MADE IN THE ASSEMBLY, the toolbar's own button (the start screen is gone by then), its
+    /// drawing drawn by the call the `draw` closure makes and grown by the extrude call, the part
+    /// finished back into the assembly.
+    fn a_part_made_in_the_assembly(core: &mut qymcad::AgentSession, draw: impl FnOnce(&mut qymcad::AgentSession)) {
+        let new_part = core.word("tb-new-part-hint");
+        core.press_hint(&new_part);
+        let xy = core.word("plane-xy-table");
+        core.press_word(&xy);
+        draw(core);
+        let finish = core.word("wb-finish");
+        core.press_word_near(&finish, qymcad::pos2(0.0, 0.0));
+        call(core, "part.extrude", &serde_json::json!({ "Length": "10" }));
+        core.press_word_near(&finish, qymcad::pos2(0.0, 0.0));
+    }
+
+    /// THE LAST PART PLACED at `x` along X, by the numbers of its properties, as a person places a
+    /// part: its row clicked in the tree, X filled, Enter.
+    fn the_last_part_placed_at(core: &mut qymcad::AgentSession, x: f64) {
+        let name = core.document().parts.last().map(|p| p.name.clone()).expect("a part stands to be placed");
+        let row = core.find(&name, qymcad::pos2(0.0, 300.0)).unwrap_or_else(|| panic!("the part {name:?} is not in the tree"));
+        core.click(row.center());
+        core.fill("X", &x.to_string());
+        core.key(qymcad::Key::Enter);
+    }
+
+    /// A REVOLUTE HINGE LAID AS BUILT between two corners of the parts that stand: the joint list's
+    /// start button, the kind chosen in the bar, "keep as it stands" ticked (a hinge laid the other
+    /// way pulls the parts onto one another), the two corners clicked, Enter, the tool put down.
+    fn a_revolute_hinge_as_built(core: &mut qymcad::AgentSession, a: [f64; 3], b: [f64; 3]) {
+        let start = core.word("jp-start-joint");
+        core.press_word_near(&start, qymcad::pos2(1100.0, 400.0));
+        let caption = core.word("j-kind");
+        let list = core.field(&caption);
+        core.click(list.rect.center());
+        let want = core.word("joint-kind-revolute");
+        core.press_word_near(&want, list.rect.center());
+        let as_built = core.word("j-as-built");
+        core.press_word_near(&as_built, qymcad::pos2(640.0, 24.0));
+        let at = core.vertex_at(a);
+        core.click(at);
+        let at = core.vertex_at(b);
+        core.click(at);
+        core.key(qymcad::Key::Enter);
+        core.key(qymcad::Key::Escape);
+    }
+
+    /// THE FIXTURE A MATE STANDS ON, what the mate of `code` needs: one part with a block (the
+    /// ground), a second part beside it or a shaft (the joint, the group, the tangent), walls with a
+    /// tab between them (the width), or three blocks with two hinges (the relation).
+    fn the_fixture_of_the_mates(core: &mut qymcad::AgentSession, code: &str) {
+        let block = |core: &mut qymcad::AgentSession| {
+            call(core, "sketch.rect", &serde_json::json!({ "points": [[0.0, 0.0], [40.0, 30.0]] }));
+        };
+        match code {
+            "assembly.ground" => the_block_in_the_assembly(core),
+            "assembly.tangent" => {
+                the_block_in_the_assembly(core);
+                a_part_made_in_the_assembly(core, |core| {
+                    call(core, "sketch.circle", &serde_json::json!({ "points": [[70.0, 15.0], [75.0, 15.0]] }));
+                });
+            }
+            "assembly.width" => {
+                let rect = |from: (f64, f64), to: (f64, f64)| {
+                    move |core: &mut qymcad::AgentSession| {
+                        call(core, "sketch.rect", &serde_json::json!({ "points": [[from.0, from.1], [to.0, to.1]] }));
+                    }
+                };
+                the_first_part_of(core, rect((0.0, 0.0), (10.0, 30.0))); // the first wall
+                a_part_made_in_the_assembly(core, rect((50.0, 0.0), (60.0, 30.0))); // the second wall
+                a_part_made_in_the_assembly(core, rect((20.0, 10.0), (30.0, 20.0)));
+                // the tab between them
+            }
+            "assembly.relation" => {
+                the_block_in_the_assembly(core);
+                a_part_made_in_the_assembly(core, block);
+                the_last_part_placed_at(core, 60.0);
+                a_part_made_in_the_assembly(core, block);
+                the_last_part_placed_at(core, 120.0);
+                a_revolute_hinge_as_built(core, [40.0, 0.0, 10.0], [100.0, 0.0, 10.0]);
+                a_revolute_hinge_as_built(core, [40.0, 0.0, 0.0], [160.0, 0.0, 10.0]);
+            }
+            _ => {
+                the_block_in_the_assembly(core);
+                a_part_made_in_the_assembly(core, block);
+                the_last_part_placed_at(core, 60.0);
+            }
+        }
+    }
+
+    /// WHAT THE CALL OF A MATE CARRIES over its fixture: the picks each mate needs, the joint's own
+    /// kind, the relation's two joints read off the list that stands.
+    fn the_sample_of_the_mates(core: &mut qymcad::AgentSession, code: &str) -> serde_json::Value {
+        match code {
+            "assembly.joint" => serde_json::json!({ "kind": "Rigid", "picks": [[20.0, 15.0, 10.0], [80.0, 15.0, 10.0]] }),
+            "assembly.ground" => serde_json::json!({ "picks": [[20.0, 15.0, 10.0]] }),
+            "assembly.group" => serde_json::json!({ "picks": [[20.0, 15.0, 10.0], [80.0, 15.0, 10.0]] }),
+            "assembly.tangent" => serde_json::json!({ "picks": [[20.0, 0.0, 5.0], [70.0, 10.0, 5.0]] }),
+            "assembly.width" => serde_json::json!({ "picks": [[10.0, 15.0, 5.0], [60.0, 15.0, 5.0], [25.0, 15.0, 10.0]] }),
+            "assembly.relation" => {
+                let names: Vec<String> = core.document().joints.iter().map(|j| j.name.clone()).collect();
+                serde_json::json!({ "joints": names })
+            }
+            _ => unreachable!("the mates have no other code"),
+        }
+    }
+
     /// THE WORKING BODY of a program, as the person sees it: the last solid that is its own - sheets and
     /// the pieces other features have used up do not answer for the body.
     fn the_working_body(program: &mut qymcad::LiveLoop) -> qymcad::Solid {
@@ -2901,5 +3253,186 @@ mod tests {
         .expect("the body was read");
         assert!(node.error.is_none(), "the recognised node is red: {node:?}");
         assert!((body.volume - 1000.0).abs() < 1.0, "the cube of 10 recognised holds 1000, and the body holds {}", body.volume);
+    }
+
+    /// THE JOINTS OF EVERY KIND, run as calls between the top faces of two blocks and weighed: each
+    /// kind asked for is the kind that stands in the list, each holds (nothing violated), and the
+    /// rigid one brings the second block onto the first wherever it stood - the acceptance suite's
+    /// own numbers. A kind no joint comes in is refused in words that name the kinds, and nothing
+    /// changed by it.
+    #[test]
+    fn the_joints_of_every_kind_hold_what_they_promise() {
+        let _turn = crate::checks::take_your_turn();
+        for (_, kind) in JOINT_KINDS {
+            let kind = kind.to_string();
+            let (for_the_call, the_kind) = (kind.clone(), kind.clone());
+            let mut program = qymcad::LiveLoop::start();
+            let answered = crate::checks::ask_the_core(&mut program, move |core| {
+                the_block_in_the_assembly(core);
+                a_part_made_in_the_assembly(core, |core| {
+                    call(core, "sketch.rect", &serde_json::json!({ "points": [[0.0, 0.0], [40.0, 30.0]] }));
+                });
+                the_last_part_placed_at(core, 60.0);
+                call(core, "assembly.joint", &serde_json::json!({ "kind": for_the_call, "picks": [[20.0, 15.0, 10.0], [80.0, 15.0, 10.0]] }))
+            })
+            .expect("the call answered");
+            assert!(matches!(answered, TheCall::Answered { .. }), "a {kind} joint was not laid: {answered:?}");
+            let (stands, holds, second_at) = crate::checks::ask_the_core(&mut program, move |core| {
+                let document = core.document();
+                let joint = document.joints.last().cloned().expect("a joint stands");
+                (the_same_kind(&joint.kind, &the_kind), !joint.violated, document.parts.last().map(|p| p.at))
+            })
+            .expect("the joint was read");
+            assert!(stands, "a {kind} joint was asked for and another kind stands");
+            assert!(holds, "the {kind} joint does not hold");
+            if kind == "Rigid" {
+                let at = second_at.expect("the second part stands");
+                assert!(at.iter().all(|v| v.abs() < 1e-3), "the rigid joint did not bring the second block onto the first: it stands at {at:?}");
+            }
+        }
+        // A KIND NO JOINT COMES IN: refused in words, the document as it stood
+        let mut program = qymcad::LiveLoop::start();
+        let (answered, joints) = crate::checks::ask_the_core(&mut program, |core| {
+            the_block_in_the_assembly(core);
+            a_part_made_in_the_assembly(core, |core| {
+                call(core, "sketch.rect", &serde_json::json!({ "points": [[0.0, 0.0], [40.0, 30.0]] }));
+            });
+            the_last_part_placed_at(core, 60.0);
+            let answered = call(core, "assembly.joint", &serde_json::json!({ "kind": "Wobbly", "picks": [[20.0, 15.0, 10.0], [80.0, 15.0, 10.0]] }));
+            (answered, core.document().joints.len())
+        })
+        .expect("the call answered");
+        match answered {
+            TheCall::Refused(words) => assert!(words.contains("Wobbly") && words.contains("Rigid"), "the refusal does not name what was asked and what there is: {words}"),
+            other => panic!("a joint of no kind was laid: {other:?}"),
+        }
+        assert_eq!(joints, 0, "the refused call left a joint in the list");
+    }
+
+    /// THE GROUND AND THE GROUP, run as calls and read where they stand: the ground fixes the part
+    /// under its click - the anchor of the assembly, the tool staying in hand until Esc puts it down;
+    /// the group holds the two parts together where they stand, a mate of the kind "Group" and no
+    /// joint laid between them.
+    #[test]
+    fn the_ground_and_the_group_hold_what_they_promise() {
+        let _turn = crate::checks::take_your_turn();
+        // THE GROUND: one part, fixed by the click
+        let mut program = qymcad::LiveLoop::start();
+        let answered = crate::checks::ask_the_core(&mut program, |core| {
+            the_block_in_the_assembly(core);
+            call(core, "assembly.ground", &serde_json::json!({ "picks": [[20.0, 15.0, 10.0]] }))
+        })
+        .expect("the call answered");
+        assert!(matches!(answered, TheCall::Answered { .. }), "the ground did not run: {answered:?}");
+        let (grounded, in_hand) = crate::checks::ask_the_core(&mut program, |core| {
+            let grounded = core.document().parts.iter().filter(|p| p.grounded).count();
+            (grounded, core.in_hand())
+        })
+        .expect("the parts were read");
+        assert_eq!(grounded, 1, "one part was clicked and {grounded} stand fixed");
+        assert!(in_hand.is_empty(), "the tool stayed in hand after Esc: {in_hand:?}");
+        // THE GROUP: two parts, held together where they stand
+        let mut program = qymcad::LiveLoop::start();
+        let answered = crate::checks::ask_the_core(&mut program, |core| {
+            the_block_in_the_assembly(core);
+            a_part_made_in_the_assembly(core, |core| {
+                call(core, "sketch.rect", &serde_json::json!({ "points": [[0.0, 0.0], [40.0, 30.0]] }));
+            });
+            the_last_part_placed_at(core, 60.0);
+            call(core, "assembly.group", &serde_json::json!({ "picks": [[20.0, 15.0, 10.0], [80.0, 15.0, 10.0]] }))
+        })
+        .expect("the call answered");
+        assert!(matches!(answered, TheCall::Answered { .. }), "the group did not run: {answered:?}");
+        let (mates, joints, at) = crate::checks::ask_the_core(&mut program, |core| {
+            let document = core.document();
+            (document.mates.clone(), document.joints.len(), document.parts.last().map(|p| p.at))
+        })
+        .expect("the mates were read");
+        assert_eq!(mates, vec!["Group".to_string()], "the group is not the one mate standing: {mates:?}");
+        assert_eq!(joints, 0, "a group laid a joint, and it is no joint");
+        let at = at.expect("the second part stands");
+        assert!((at[0] - 60.0).abs() < 1e-3, "the parts did not stay where they stood: the second is at {at:?}");
+    }
+
+    /// THE TANGENT AND THE WIDTH, run as calls and read where they stand: the shaft comes to rest on
+    /// the face of the block, the distance between them its radius; the tab comes to stand midway
+    /// between the walls. Each leaves its mate of its own kind in the list.
+    #[test]
+    fn the_tangent_and_the_width_rest_and_sit_their_parts() {
+        let _turn = crate::checks::take_your_turn();
+        // THE TANGENT: a shaft 10 across resting its side on the front face of the block
+        let mut program = qymcad::LiveLoop::start();
+        let answered = crate::checks::ask_the_core(&mut program, |core| {
+            the_fixture_of_the_mates(core, "assembly.tangent");
+            let given = the_sample_of_the_mates(core, "assembly.tangent");
+            call(core, "assembly.tangent", &given)
+        })
+        .expect("the call answered");
+        assert!(matches!(answered, TheCall::Answered { .. }), "the tangent did not run: {answered:?}");
+        let (mates, at) = crate::checks::ask_the_core(&mut program, |core| {
+            let document = core.document();
+            (document.mates.clone(), document.parts.last().map(|p| p.at))
+        })
+        .expect("the mates were read");
+        assert_eq!(mates, vec!["Tangent".to_string()], "the tangent is not the one mate standing: {mates:?}");
+        let at = at.expect("the shaft's part stands");
+        let off = (15.0 + at[1]).abs(); // the shaft was drawn about y 15: its centre stands 15 + at off the face, on either side of it
+        assert!((off - 5.0).abs() < 1e-3, "the shaft of radius 5 does not rest its centre 5 off the face: the part is at {at:?}, its centre {off} off");
+        // THE WIDTH: the tab set midway between the walls ten and forty apart
+        let mut program = qymcad::LiveLoop::start();
+        let answered = crate::checks::ask_the_core(&mut program, |core| {
+            the_fixture_of_the_mates(core, "assembly.width");
+            let given = the_sample_of_the_mates(core, "assembly.width");
+            call(core, "assembly.width", &given)
+        })
+        .expect("the call answered");
+        assert!(matches!(answered, TheCall::Answered { .. }), "the width did not run: {answered:?}");
+        let (mates, at) = crate::checks::ask_the_core(&mut program, |core| {
+            let document = core.document();
+            (document.mates.clone(), document.parts.last().map(|p| p.at))
+        })
+        .expect("the mates were read");
+        assert_eq!(mates, vec!["Width".to_string()], "the width is not the one mate standing: {mates:?}");
+        let at = at.expect("the tab's part stands");
+        assert!((at[0] - 10.0).abs() < 1e-3, "the tab drawn at 20..30 does not sit midway between the faces picked, at 10 and at 60 (35 its centre, 10 over where it stood): the part is at {at:?}");
+    }
+
+    /// THE RELATION AND THE DRAG, run over two hinges the person's own gestures laid: the relation
+    /// ties the turns of the two hinges in step, a Gear mate beside the joints; the drag - the
+    /// person's own gesture of taking a part and pulling - turns the hanging part about its hinge,
+    /// the one degree of freedom it has left.
+    #[test]
+    fn the_relations_tie_two_hinges_and_the_drag_turns_them() {
+        let _turn = crate::checks::take_your_turn();
+        // THE RELATION: a gear over the two hinges
+        let mut program = qymcad::LiveLoop::start();
+        let answered = crate::checks::ask_the_core(&mut program, |core| {
+            the_fixture_of_the_mates(core, "assembly.relation");
+            let given = the_sample_of_the_mates(core, "assembly.relation");
+            call(core, "assembly.relation", &given)
+        })
+        .expect("the call answered");
+        assert!(matches!(answered, TheCall::Answered { .. }), "the relation did not run: {answered:?}");
+        let mates = crate::checks::ask_the_core(&mut program, |core| core.document().mates.clone()).expect("the mates were read");
+        assert_eq!(mates, vec!["Gear".to_string()], "the gear is not the one mate standing: {mates:?}");
+        // THE DRAG: the part that hangs on a hinge follows the pull, turning about the hinge
+        let mut program = qymcad::LiveLoop::start();
+        let turned = crate::checks::ask_the_core(&mut program, |core| {
+            the_block_in_the_assembly(core);
+            a_part_made_in_the_assembly(core, |core| {
+                call(core, "sketch.rect", &serde_json::json!({ "points": [[0.0, 0.0], [40.0, 30.0]] }));
+            });
+            the_last_part_placed_at(core, 60.0);
+            a_revolute_hinge_as_built(core, [40.0, 0.0, 10.0], [60.0, 0.0, 10.0]);
+            let before = core.document().parts.last().map(|p| (p.at, p.axes)).expect("the second part stands");
+            let from = core.face_at([60.0, 15.0, 10.0]); // the part on the hinge, not the grounded block
+            let to = from + qymcad::vec2(0.0, -120.0);
+            core.drag(from, to, qymcad::PointerButton::Primary, qymcad::Modifiers::SHIFT);
+            let now = core.document().parts.last().map(|p| (p.at, p.axes)).expect("the second part stands");
+            (before, now)
+        })
+        .expect("the drag ran");
+        let ((at_before, axes_before), (at_now, axes_now)) = turned;
+        assert!(at_now != at_before || axes_now != axes_before, "the part on the hinge did not follow the pull: it stands at {at_now:?} looking {axes_now:?}, as before");
     }
 }

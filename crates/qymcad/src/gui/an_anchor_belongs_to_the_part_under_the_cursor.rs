@@ -14,6 +14,7 @@
 #[cfg(test)]
 mod tests {
     use super::super::App;
+    use super::super::mate_infer::{infer_axis_anchor, infer_mate_anchor};
     use qymcad_core::feature::{apply12, AnchorRef};
     use qymcad_core::model::Id;
 
@@ -108,7 +109,7 @@ mod tests {
         let under = app.pick_part_face_at(viewport(), at).map(|(b, _)| b);
         assert_eq!(under, Some(mine), "GUARD: the wrong part turned up under the cursor ({under:?}) — the aim missed");
 
-        let got = app.infer_mate_anchor(viewport(), at).expect("there is a part under the cursor, an anchor must be inferred");
+        let got = infer_mate_anchor(&app.painting(), viewport(), at).expect("there is a part under the cursor, an anchor must be inferred");
         let owner = match &got.1 {
             AnchorRef::FaceCenter(b, _) | AnchorRef::EdgeMid(b, _) | AnchorRef::Vertex(b, _, _) => Some(*b),
             _ => None,
@@ -129,7 +130,7 @@ mod tests {
         let under = app.pick_part_face_at(viewport(), at).map(|(b, _)| b);
         assert_eq!(under, Some(mine), "GUARD: the wrong part turned up under the cursor ({under:?}) — the aim missed");
 
-        let got = app.infer_axis_anchor(viewport(), at).expect("there is a part under the cursor, a direction must be inferred");
+        let got = infer_axis_anchor(&app.painting(), viewport(), at).expect("there is a part under the cursor, a direction must be inferred");
         let owner = match &got.1 {
             AnchorRef::FaceCenter(b, _) | AnchorRef::EdgeMid(b, _) | AnchorRef::Vertex(b, _, _) => Some(*b),
             _ => None,

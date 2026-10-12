@@ -451,7 +451,7 @@ impl App {
                 } else if self.side.joint.axis_pick.is_some() {
                     // THE SECOND PICK: a person points at what the anchor's secondary axis runs along.
                     // ONE door is asked, and it takes only what is under the cursor.
-                    match self.infer_axis_anchor(rect, pos) {
+                    match mate_infer::infer_axis_anchor(&self.painting(), rect, pos) {
                         Some((_, anchor)) => qymcad_assembly::joint_axis_pick_apply(&mut self.joint_ctx(), anchor),
                         None => self.status = crate::i18n::tr("j-axis-miss"),
                     }
