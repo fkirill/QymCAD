@@ -7,7 +7,8 @@
 //! server says.
 use crate::registry::{the_same_kind, the_words_of, Answered, Run, Take};
 
-/// ONE OPERATION OF THE WHOLE PROGRAM, as the agent calls it by name.
+/// ONE OPERATION OF THE WHOLE PROGRAM, as the agent calls it by name - and one gesture of the
+/// person's own vocabulary, which the UI-driver escape hatch serves in the same shape.
 pub(crate) struct General {
     /// The code the operation is called by: `area.name`, the catalogue's own style.
     pub(crate) code: &'static str,

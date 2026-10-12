@@ -59,6 +59,21 @@ static WAITING: Mutex<VecDeque<Call>> = Mutex::new(VecDeque::new());
 /// work says it is done.
 static RUNNING: Mutex<Option<Running>> = Mutex::new(None);
 
+/// THE AGENT'S OWN WINDOW, kept between its calls: what a person's window keeps - the focus a click
+/// left in a field, the place a panel is scrolled to - so a typing that follows a click lands where
+/// the click went, even when the two are calls of their own. The gestures themselves (the buttons
+/// held, the keys held) end with their call; the window is what remains.
+static THE_HANDS: Mutex<Option<crate::gui::session::Hands>> = Mutex::new(None);
+
+/// PUT THE AGENT'S HANDS DOWN: its window begins afresh, as when the program started. The door a
+/// check takes between one program and the next, so one check's window does not leak into
+/// another's; the program itself needs it never - one process hosts one program.
+pub fn the_agent_begins_again() {
+    if let Ok(mut hands) = THE_HANDS.lock() {
+        *hands = None;
+    }
+}
+
 /// IS A CALL OF THE AGENT RUNNING - taken up, not yet answered: what the window says with the card of a
 /// background job, so the person knows whose work the program is doing.
 static AT_WORK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -146,7 +161,13 @@ pub(crate) fn pump(app: &mut App, ctx: &egui::Context) {
         Some(running) => (running.work, running.answer, running.settling, AgentSession::with_hands(running.hands, app)),
         None => {
             let Some(call) = WAITING.lock().ok().and_then(|mut waiting| waiting.pop_front()) else { return };
-            (call.work, call.answer, false, AgentSession::over(app, window_size(ctx)))
+            // THE WINDOW THE AGENT'S LAST CALL LEFT, when there is one: its focus and its scrolls
+            // are what a person's window keeps between two gestures
+            let hands = THE_HANDS.lock().ok().and_then(|mut kept| kept.take());
+            match hands {
+                Some(hands) => (call.work, call.answer, false, AgentSession::with_hands(hands, app)),
+                None => (call.work, call.answer, false, AgentSession::over(app, window_size(ctx))),
+            }
         }
     };
     AT_WORK.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -159,11 +180,13 @@ pub(crate) fn pump(app: &mut App, ctx: &egui::Context) {
     // one. The call is answered so, the chooser stands open, and nothing is changed by the call.
     if done && quiet && app.asking_for_a_file() {
         AT_WORK.store(false, std::sync::atomic::Ordering::Relaxed);
+        keep_the_window(hands);
         let _ = answer.send(Ended::Asking);
         return;
     }
     if done && quiet {
         AT_WORK.store(false, std::sync::atomic::Ordering::Relaxed);
+        keep_the_window(hands);
         let _ = answer.send(Ended::Done);
     } else {
         if let Ok(mut held) = RUNNING.lock() {
@@ -173,11 +196,21 @@ pub(crate) fn pump(app: &mut App, ctx: &egui::Context) {
     }
 }
 
+/// KEEP THE AGENT'S WINDOW for its next call: the window is the agent's own, one for all its calls
+/// over this program.
+fn keep_the_window(hands: crate::gui::session::Hands) {
+    if let Ok(mut kept) = THE_HANDS.lock() {
+        *kept = Some(hands);
+    }
+}
+
 /// THE CHECKS TAKE TURNS at the agent's machinery: the queue and the frame are one for the whole process,
-/// and checks beside each other would take each other's calls.
+/// and checks beside each other would take each other's calls. Each begins with the agent's own hands put
+/// down, so one check's window does not leak into the next check's program.
 #[cfg(test)]
 pub(crate) fn take_your_turn() -> std::sync::MutexGuard<'static, ()> {
     static TURNS: Mutex<()> = Mutex::new(());
+    the_agent_begins_again();
     TURNS.lock().expect("the turns of the checks are not held by a poisoned lock")
 }
 

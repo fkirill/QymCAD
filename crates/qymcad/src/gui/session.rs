@@ -18,10 +18,11 @@ use super::window::Window;
 use super::App;
 
 pub use crate::system::Chooser;
-/// THE AGENT'S DOORS INTO THE PROGRAM: handing a call to the frames, and the wish of the settings the
-/// server follows. Through the session's door, as everything the outside may reach - the server crate
-/// stands on the program and reaches it by these alone.
-pub use crate::mcp::{Ended, Serving, Work, hand_over, the_wish};
+/// THE AGENT'S DOORS INTO THE PROGRAM: handing a call to the frames, the wish of the settings the
+/// server follows, and the putting down of the agent's own hands between programs. Through the
+/// session's door, as everything the outside may reach - the server crate stands on the program and
+/// reaches it by these alone.
+pub use crate::mcp::{the_agent_begins_again, Ended, Serving, Work, hand_over, the_wish};
 /// THE COMMAND CATALOGUE - the one source the search, the panel and the keys read - handed out for deriving
 /// the agent's tool registry from. The names come through `Command::name` and `Command::name_in`, each in the
 /// language asked for.

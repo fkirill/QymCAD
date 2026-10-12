@@ -1,6 +1,7 @@
 //! THE REGISTRY OF OPERATIONS the agent calls by name: every command of the program's catalogue,
 //! derived from it - never written beside it - and beside them the operations of the whole program
-//! (the view, the file, the table of parameters), derived from the help articles that name them. A
+//! (the view, the file, the table of parameters), derived from the help articles that name them,
+//! and the person's gestures of the UI-driver escape hatch, named by the words of the dictionary. A
 //! command the panel offers cannot be missing from the agent's reach, and a row the catalogue never
 //! held cannot appear in it; the guard in this module's checks holds that link in both directions.
 //!
@@ -110,6 +111,12 @@ fn checked_against(given: &serde_json::Value, fields: &[Parameter], takes: &[Tak
         }
         if take.kind == "joints" && !the_names_of(Some(value)).is_some_and(|s| s.len() >= 2) {
             return Err(format!("{name} takes the names of the joints of the list of mates, two at least, and the call carried {value}"));
+        }
+        if take.kind == "place" && !crate::ui_driver::the_place_of(value).is_some() {
+            return Err(format!("{name} takes one place - a pair [x, y] of the sheet of the open sketch, or a triple [x, y, z] of the space of the model - and the call carried {value}"));
+        }
+        if take.kind == "words" && !the_names_of(Some(value)).is_some_and(|s| !s.is_empty()) {
+            return Err(format!("{name} takes a list of words, one at least, and the call carried {value}"));
         }
     }
     for take in takes {
@@ -249,7 +256,9 @@ pub(crate) struct Take {
     /// What kind of value it takes: `points` - places on the sheet of the open sketch, each an [x, y]
     /// pair; `picks` - places in the space of the model, each an [x, y, z] triple naming what stands
     /// there (an edge, a face, a body, a mesh); `sketches` - the names of finished sketches of the tree,
-    /// each clicked into the tool as a person clicks its row.
+    /// each clicked into the tool as a person clicks its row; `place` - ONE place, a pair of the sheet
+    /// or a triple of the space, as a click goes; `words` - a list of words, as a menu is walked by
+    /// them.
     pub(crate) kind: &'static str,
 }
 
@@ -287,7 +296,15 @@ pub(crate) fn the_registry() -> &'static [Entry] {
             run: Some(o.run),
             takes: o.takes,
         });
-        of_commands.chain(of_the_program).collect()
+        // THE PERSON'S GESTURES stand beside them: the escape hatch over the whole interface, so
+        // whatever no named operation serves is reachable all the same
+        let of_the_gestures = crate::ui_driver::THE_PERSON_S_GESTURES.iter().map(|o| Entry {
+            by: By::OfTheProgram { code: o.code, article: o.article, name_key: o.name_key },
+            synonyms: o.synonyms,
+            run: Some(o.run),
+            takes: o.takes,
+        });
+        of_commands.chain(of_the_program).chain(of_the_gestures).collect()
     })
 }
 
@@ -1193,9 +1210,9 @@ fn cut_the_view_by_a_plane(core: &mut qymcad::AgentSession, code: &str, given: &
     }
 }
 
-/// THE NAMES A VALUE HOLDS: finished sketches of the tree, joints of the list of mates - each a
-/// string; `None` at the first thing that is not one.
-fn the_names_of(value: Option<&serde_json::Value>) -> Option<Vec<String>> {
+/// THE NAMES A VALUE HOLDS: finished sketches of the tree, joints of the list of mates, the words
+/// of a menu's items - each a string; `None` at the first thing that is not one.
+pub(crate) fn the_names_of(value: Option<&serde_json::Value>) -> Option<Vec<String>> {
     value?.as_array()?.iter().map(|s| Some(s.as_str()?.to_string())).collect()
 }
 
@@ -1380,7 +1397,7 @@ fn opens_a_bar(command: &qymcad::Command) -> bool {
 /// its caption or grey words, its kind, and what it holds. A field with no caption of its own is read
 /// by the words painted beside it on the canvas (the sizes of a primitive stand at the geometry, their
 /// captions drawn beside them and not in the field) - the same pairing a fill makes.
-fn the_fields_on_screen(core: &mut qymcad::AgentSession) -> Vec<Parameter> {
+pub(crate) fn the_fields_on_screen(core: &mut qymcad::AgentSession) -> Vec<Parameter> {
     let painted = core.painted();
     core.widgets()
         .into_iter()
@@ -1460,6 +1477,8 @@ pub(crate) fn parameters(core: &mut qymcad::AgentSession, code: &str) -> Vec<Par
             "picks" => "places in the space of the model, each an [x, y, z] triple naming what stands there".to_string(),
             "sketches" => "the names of finished sketches of the tree, in the order the tool takes them".to_string(),
             "joints" => "the names of the joints of the list of mates, in the order the tool ties them".to_string(),
+            "place" => "one place: a pair [x, y] of the sheet of the open sketch, or a triple [x, y, z] of the space of the model".to_string(),
+            "words" => "a list of words, in the order they are walked".to_string(),
             _ => String::new(),
         },
     }));
@@ -1485,8 +1504,9 @@ mod tests {
 
     /// THE REGISTRY IS THE CATALOGUE AND THE HELP, derived whole: every command of the catalogue is an
     /// entry, each entry carries its command's code and workbench, its names in each language the
-    /// program speaks; beside them stand the operations of the whole program, each named by its article
-    /// in each language - and nothing else stands in the registry.
+    /// program speaks; beside them stand the operations of the whole program and the person's
+    /// gestures, each named by the word of the dictionary in each language - and nothing else stands
+    /// in the registry.
     #[test]
     fn the_registry_is_derived_from_the_catalogue_whole() {
         for command in qymcad::COMMANDS {
@@ -1504,8 +1524,8 @@ mod tests {
         }
         assert_eq!(
             the_registry().len(),
-            qymcad::COMMANDS.len() + crate::general::THE_OPERATIONS_OF_THE_PROGRAM.len(),
-            "the registry holds entries neither the catalogue nor the table of the program's own operations carries"
+            qymcad::COMMANDS.len() + crate::general::THE_OPERATIONS_OF_THE_PROGRAM.len() + crate::ui_driver::THE_PERSON_S_GESTURES.len(),
+            "the registry holds entries neither the catalogue, nor the table of the program's own operations, nor the person's gestures carry"
         );
     }
 

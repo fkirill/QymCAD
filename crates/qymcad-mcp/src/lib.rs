@@ -19,6 +19,7 @@ use tokio_util::sync::CancellationToken;
 mod general;
 mod registry;
 mod tools;
+mod ui_driver;
 
 /// THE HEADER A CLIENT'S REQUEST MUST CARRY: the pairing token, as the settings show it beside the
 /// switch. Lower-case, as HTTP headers travel.
@@ -122,9 +123,11 @@ struct TheAgent;
 #[cfg(test)]
 pub(crate) mod checks {
     /// THE CHECKS TAKE TURNS at the agent's machinery: the queue and the server are one for the whole
-    /// process, and checks beside each other would take each other's calls.
+    /// process, and checks beside each other would take each other's calls. Each begins with the
+    /// agent's own hands put down, so one check's window does not leak into the next check's program.
     pub(crate) fn take_your_turn() -> std::sync::MutexGuard<'static, ()> {
         static TURNS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        qymcad::the_agent_begins_again();
         TURNS.lock().expect("the turns of the checks are not held by a poisoned lock")
     }
 
