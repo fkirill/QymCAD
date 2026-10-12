@@ -39,7 +39,7 @@
 - [x] 6.3 Sketch operations: every drawing tool, the twelve constraints, the three dimensions, trim/extend/break/project, move/copy/rotate/mirror/offset, corner and chamfer; each with its own contract check through `AgentSession`
 - [x] 6.4 Part operations: every feature and primitive of the catalogue, datums, sketch-on-face; each with its own check
 - [x] 6.5 Assembly operations: joints of every kind, mates, relations, groups, ground, drag; each with its own check
-- [ ] 6.6 Parameters, view (orbit, fit, section), measurement, import/export of every format the program offers; each with its own check
+- [x] 6.6 Parameters, view (orbit, fit, section), measurement, import/export of every format the program offers; each with its own check
 - [ ] 6.7 The UI-driver escape hatch: the person vocabulary over `AgentSession` (press a button by hint, click a point of the sketch or of space, fill a field, walk a menu, press a key, type); check: a scenario does something with no named entry using only the escape hatch
 - [ ] 6.8 `screenshot`: `qymcad_render::rasterize_3d` of the current view as PNG image content; check: the answer's bytes open as a picture of what the window shows
 
