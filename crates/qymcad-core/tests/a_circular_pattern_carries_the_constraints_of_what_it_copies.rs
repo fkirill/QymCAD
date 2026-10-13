@@ -76,14 +76,7 @@ fn a_circular_pattern_carries_a_junction_coincidence_through_the_quick_edit_tool
     let first = tied_arcs(&mut p, si);
     let from = p.sketches[si].constraints.len();
     p.array_circular(si, &[first], 0.0, 0.0, 7, 420.0); // a full turn and one step of 60 degrees: the sixth copy lands on the source
-    let carried = new_of(&p, si, from, is_coincident);
-    assert!(carried.len() == 1, "the copy that lands on the neighbour keeps the coincidence; {} clones were carried", carried.len());
-    let source = source_points(&p, si, &[first]);
-    for c in p.sketches[si].constraints[from..].iter() {
-        for id in constraint_point_ids(c) {
-            assert!(!source.contains(&id), "a clone references the point {id} of the source elements");
-        }
-    }
+    assert_carried_one_junction_coincidence_and_no_clone_names_the_source(&p, si, first, from);
     assert!(p.sketch_conflicts(si).is_empty(), "the sketch solves with the carried coincidence");
 }
 
@@ -94,15 +87,28 @@ fn a_circular_pattern_carries_a_junction_coincidence_through_the_pattern_bar() {
     let first = tied_arcs(&mut p, si);
     let from = p.sketches[si].constraints.len();
     let _ = p.add_pattern(si, &[first], PatternKind::Circular { cx: 0.0, cy: 0.0, count: 7, total_deg: 420.0 });
-    let carried = new_of(&p, si, from, is_coincident);
-    assert!(carried.len() == 1, "the copy that lands on the neighbour keeps the coincidence; {} clones were carried", carried.len());
-    let source = source_points(&p, si, &[first]);
+    assert_carried_one_junction_coincidence_and_no_clone_names_the_source(&p, si, first, from);
+    assert!(p.sketch_conflicts(si).is_empty(), "the sketch solves with the carried coincidence");
+}
+
+/// One junction coincidence is carried - the copy that comes round the whole turn keeps the tie - and no
+/// CLONE names a point of the source elements. The pattern's pins are not clones and are excepted by kind:
+/// they speak about the source's anchor pair by design, that being the relation the rotation is; the
+/// whole-turn pin ties the copy to its source points by coincidence.
+fn assert_carried_one_junction_coincidence_and_no_clone_names_the_source(p: &Project, si: usize, first: Id, from: usize) {
+    let source = source_points(p, si, &[first]);
+    let carried = p.sketches[si].constraints[from..].iter().filter(|c| is_coincident(c) && !constraint_point_ids(c).iter().any(|id| source.contains(id))).count();
+    assert!(carried == 1, "the copy that lands on the neighbour keeps the coincidence; {} clones were carried", carried);
     for c in p.sketches[si].constraints[from..].iter() {
+        let pin =
+            matches!(c, Constraint::Angle { .. } | Constraint::AngleLines { .. } | Constraint::Equal { .. }) || (is_coincident(c) && constraint_point_ids(c).iter().any(|id| source.contains(id)));
+        if pin {
+            continue;
+        }
         for id in constraint_point_ids(c) {
             assert!(!source.contains(&id), "a clone references the point {id} of the source elements");
         }
     }
-    assert!(p.sketch_conflicts(si).is_empty(), "the sketch solves with the carried coincidence");
 }
 
 // A TURNED COPY KEEPS ITS LEVEL ONLY WHERE IT IS LEVEL AGAIN: the copy turned by a half turn lies level and
@@ -127,7 +133,8 @@ fn a_turned_copy_keeps_its_level_only_where_it_is_level_again() {
         let q = p.sketches[si].points.iter().find(|q| &q.id == id).unwrap();
         assert!(q.y.abs() < 5e-3 && q.x < 0.0, "the horizontal was carried onto a copy that does not lie level: ({}, {})", q.x, q.y);
     }
-    // the copies on their side carry nothing
+    // the copies on their side carry no level: only the pins - the pattern's own relations, not a carried
+    // constraint - name their points
     for e in p.sketches[si].entities.iter().skip(1) {
         let (ca, cb) = match e.kind {
             EntityKind::Line { a, b } => (a, b),
@@ -136,9 +143,9 @@ fn a_turned_copy_keeps_its_level_only_where_it_is_level_again() {
         if ids.contains(&ca) || ids.contains(&cb) {
             continue;
         }
-        for c in p.sketches[si].constraints[from..].iter() {
+        for c in p.sketches[si].constraints[from..].iter().filter(|c| is_horizontal(c)) {
             for id in constraint_point_ids(c) {
-                assert!(id != ca && id != cb, "a copy turned onto its side carries a constraint");
+                assert!(id != ca && id != cb, "a copy turned onto its side carries a horizontal");
             }
         }
     }
