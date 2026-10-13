@@ -16,8 +16,20 @@ pub(super) enum ConstraintCarry {
     /// The circular pattern's rule: a constraint that touches the copied set is cloned onto the copy when it
     /// holds of the copy as laid out - a reference inside the set remapped to the copy's corresponding point,
     /// a reference outside kept as it is, an angular value turned by the copy's `deg` - and a clone that does
-    /// not hold, or that the solver calls implied, is not laid.
-    Rotational { deg: f64 },
+    /// not hold, or that the solver calls implied, is not laid. What is cloned is what the copied elements
+    /// carried when the pattern began, `constraints[..from]`: the pattern's own pins speak about the source's
+    /// points and would otherwise be cloned onto the later copies, chaining them to the first one. The copy
+    /// is then pinned about `centre`, the pattern's centre point, so its place is held as its shape is (see
+    /// `pin_the_laid_copy`).
+    Rotational { centre: Id, deg: f64, from: usize },
+}
+
+/// THE PATTERN'S CENTRE AS A POINT OF THE SKETCH: `put` tells whether the pattern laid the point fresh -
+/// and so owns it, taking it away when it goes - or found it standing there, geometry that stays whatever
+/// happens to the pattern.
+pub(super) struct CentrePoint {
+    pub(super) id: Id,
+    pub(super) put: bool,
 }
 
 /// Turn the angular values a constraint holds by `deg`: a rotation carries an orientation and an angle with
@@ -1073,7 +1085,7 @@ impl Project {
         for sp in &s.splines {
             used.extend(sp.points.iter().copied());
         }
-        let mut protected: std::collections::HashSet<Id> = s.system_ids().into_iter().collect();
+        let mut protected: std::collections::HashSet<Id> = s.system_ids().into_iter().chain(s.patterns.iter().filter_map(|p| p.centre)).collect();
         for c in &s.constraints {
             let keep = match c {
                 Constraint::Midpoint { p, .. } => Some(vec![*p]),
@@ -1138,11 +1150,16 @@ impl Project {
                     EntityKind::Ellipse { c, ma, mi } => vec![c, ma, mi],
                 })
                 .collect();
-            // Protected free points: the system ones (origin and axes) and materialised midpoints. They must
-            // not be dropped as orphaned endpoints, or the axes and the dimensions measured from them are
-            // lost.
-            let protected: std::collections::HashSet<Id> =
-                s.system_ids().into_iter().chain(s.constraints.iter().filter_map(|c| if let Constraint::Midpoint { p, .. } = c { Some(*p) } else { None })).collect();
+            // Protected free points: the system ones (origin and axes), materialised midpoints, and the
+            // centres the patterns put - a re-layout deletes the old copies through here and must find its
+            // centre still standing. They must not be dropped as orphaned endpoints, or the axes, the
+            // dimensions measured from them and the patterns' pins are lost.
+            let protected: std::collections::HashSet<Id> = s
+                .system_ids()
+                .into_iter()
+                .chain(s.patterns.iter().filter_map(|p| p.centre))
+                .chain(s.constraints.iter().filter_map(|c| if let Constraint::Midpoint { p, .. } = c { Some(*p) } else { None }))
+                .collect();
             s.points.retain(|p| used.contains(&p.id) || protected.contains(&p.id));
             let alive: std::collections::HashSet<Id> = s.points.iter().map(|p| p.id).collect();
             s.constraints.retain(|c| constraint_point_ids(c).iter().all(|id| alive.contains(id)));
@@ -1665,7 +1682,10 @@ impl Project {
                 let cons: Vec<Constraint> = self.internal_constraints(si, &inside).iter().map(|c| remap_constraint_via(c, &map)).collect();
                 self.sketches[si].constraints.extend(cons);
             }
-            ConstraintCarry::Rotational { deg } => self.carry_rotational(si, &map, deg),
+            ConstraintCarry::Rotational { centre, deg, from } => {
+                self.carry_rotational(si, &map, deg, from);
+                self.pin_the_laid_copy(si, &map, centre, deg);
+            }
         }
         new_ids
     }
@@ -1674,10 +1694,10 @@ impl Project {
     /// rotation leaves behind is built from the copy's own map, checked against the copy as laid out, and
     /// laid only when it both holds and constrains something the sketch does not already know. A candidate
     /// that fails is dropped, not bent: no copy is dragged onto a constraint it does not satisfy.
-    pub(super) fn carry_rotational(&mut self, si: usize, map: &std::collections::HashMap<Id, Id>, deg: f64) {
+    pub(super) fn carry_rotational(&mut self, si: usize, map: &std::collections::HashMap<Id, Id>, deg: f64, from: usize) {
         let inside: std::collections::HashSet<Id> = map.keys().copied().collect();
         let cons: Vec<Constraint> = match self.sketches.get(si) {
-            Some(s) => s.constraints.iter().filter(|c| !matches!(c, Constraint::Fixed { .. }) && constraint_point_ids(c).iter().any(|p| inside.contains(p))).cloned().collect(),
+            Some(s) => s.constraints.iter().take(from).filter(|c| !matches!(c, Constraint::Fixed { .. }) && constraint_point_ids(c).iter().any(|p| inside.contains(p))).cloned().collect(),
             None => return,
         };
         for c in cons {
@@ -1693,6 +1713,127 @@ impl Project {
             } else {
                 self.add_constraint_if_independent(si, cand);
             }
+        }
+    }
+    /// The pattern's centre `(cx, cy)` as a point of the sketch, so the pins can name it: the point the
+    /// click landed on - the origin first among the points stacked at the crossing of the axes, the frame
+    /// never, it being nobody's geometry, then the nearest, then the smallest id - and, standing on
+    /// nothing, a point put at the centre and pinned where it stands, which is the centre click's own
+    /// contract. Within the landing tolerance throughout, the same tolerance the carry judges a laid copy
+    /// by, so a centre meant for geometry becomes that geometry.
+    pub(super) fn pattern_centre_point(&mut self, si: usize, cx: f64, cy: f64) -> Option<CentrePoint> {
+        const TOL: f64 = 5e-3; // mm, the tolerance a trim anchor lands a point by
+        let found = {
+            let s = self.sketches.get(si)?;
+            if s.origin != 0 && s.points.iter().any(|q| q.id == s.origin && (q.x - cx).hypot(q.y - cy) <= TOL) {
+                return Some(CentrePoint { id: s.origin, put: false });
+            }
+            let mut best: Option<(f64, Id)> = None;
+            for q in s.points.iter().filter(|q| q.id != s.frame) {
+                let d = (q.x - cx).hypot(q.y - cy);
+                if d > TOL {
+                    continue;
+                }
+                let better = match best {
+                    None => true,
+                    Some((bd, _)) => d < bd, // the points are walked in id order, so an equal distance keeps the smaller id
+                };
+                if better {
+                    best = Some((d, q.id));
+                }
+            }
+            best.map(|(_, id)| CentrePoint { id, put: false })
+        };
+        if found.is_some() {
+            return found;
+        }
+        if cx.hypot(cy) <= TOL {
+            // The crossing of the axes, the origin not yet laid: the centre the sketch already owns.
+            let id = self.ensure_origin(si);
+            return Some(CentrePoint { id, put: false });
+        }
+        let id = self.alloc_id();
+        self.sketches[si].points.push(SketchPoint { id, x: cx, y: cy });
+        self.add_constraint_if_independent(si, Constraint::Fixed { p: id });
+        Some(CentrePoint { id, put: true })
+    }
+    /// Pin a copy the rotation laid about the pattern's centre `centre`, turned by `deg`: the carry holds
+    /// the copy's shape against its own points, this holds its place, so a sketch fully constrained before
+    /// the pattern is fully constrained after it. The pins are relations the rotation itself writes, not
+    /// numbers measured at apply time, laid in the order of what the pattern means - the gates are
+    /// sequential, and where the carry already holds a place it is the last-laid, least meaningful pin
+    /// that is dropped:
+    ///
+    /// 1. an angle at the centre between the source's anchor and the copy's, the pattern's step;
+    /// 2. an angle between the source's anchor pair and the copy's, the copy's turn - not for a set of one
+    ///    circle, which has no turn of its own;
+    /// 3. an equal length from the centre to each anchor, the copy riding the source's circle.
+    ///
+    /// The anchor is the source point farthest from the centre and the tie point the one farthest from the
+    /// anchor: the best-conditioned choice, the degenerate rows living at the short end. A copy that lands
+    /// on the source - a whole turn of a sector, every copy of a set sitting on the centre - is pinned by
+    /// coincidences with its source points instead: everything the source holds holds of it there, save
+    /// the anchor pin, which the carry leaves out as placement. Every pin passes the carry's own two gates:
+    /// it holds of the copy as laid out, and the solver does not call it implied.
+    pub(super) fn pin_the_laid_copy(&mut self, si: usize, map: &std::collections::HashMap<Id, Id>, centre: Id, deg: f64) {
+        const TOL: f64 = 5e-3; // mm, the tolerance a trim anchor lands a point by
+        let (places, ids) = {
+            let Some(s) = self.sketches.get(si) else { return };
+            let mut ids: Vec<Id> = map.keys().copied().collect();
+            ids.sort_unstable();
+            (s.points.iter().map(|q| (q.id, (q.x, q.y))).collect::<std::collections::HashMap<Id, (f64, f64)>>(), ids)
+        };
+        let at = |id: Id| places.get(&id).copied();
+        let Some(o) = at(centre) else { return };
+        let dist = |p: (f64, f64), q: (f64, f64)| (p.0 - q.0).hypot(p.1 - q.1);
+        let farthest = |from: (f64, f64)| -> Option<Id> {
+            let mut best: Option<(f64, Id)> = None;
+            for &id in &ids {
+                let Some(p) = at(id) else { continue };
+                let d = dist(p, from);
+                if best.is_none_or(|(bd, _)| d > bd) {
+                    best = Some((d, id));
+                }
+            }
+            best.map(|(_, id)| id)
+        };
+        let anchor = farthest(o);
+        // The tie point is the anchor's own farthest, when it stands far enough for its direction to mean
+        // anything: a set of one circle, or one huddled at the centre, has no turn of its own.
+        let tie = match (anchor, anchor.and_then(at)) {
+            (Some(_), Some(ap)) => farthest(ap).filter(|&q| at(q).is_some_and(|qp| dist(ap, qp) > TOL)),
+            _ => None,
+        };
+        let lands_on_the_source = ids.iter().all(|&id| matches!((at(id), map.get(&id).and_then(|img| at(*img))), (Some(p), Some(q)) if dist(p, q) <= TOL));
+        let mut candidates: Vec<Constraint> = Vec::new();
+        if lands_on_the_source {
+            for &id in &ids {
+                if let Some(&img) = map.get(&id) {
+                    candidates.push(Constraint::Coincident { a: id, b: img });
+                }
+            }
+            if let (Some(anchor), Some(tie)) = (anchor, tie) {
+                candidates.push(Constraint::AngleLines { a: anchor, b: tie, c: map[&anchor], d: map[&tie], deg: 0.0, expr: String::new(), driven: false, off: 0.0, at: None });
+            }
+        } else if let Some(anchor) = anchor {
+            let img = map[&anchor];
+            // THE SOLVER'S ANGLE ROWS ARE UNSIGNED OPENINGS: atan2(|cross|, dot) never passes 180 degrees,
+            // so a step past half a turn is folded to the opening it leaves - 270 degrees is laid as 90.
+            // Which side of the source the copy stands on is where it was laid, not a sign the row could
+            // hold anyway.
+            let step = deg.rem_euclid(360.0);
+            let opening = if step > 180.0 { 360.0 - step } else { step };
+            candidates.push(Constraint::Angle { a: anchor, b: centre, c: img, deg: opening, expr: String::new(), driven: false, off: 0.0, at: None });
+            if let Some(tie) = tie {
+                candidates.push(Constraint::AngleLines { a: anchor, b: tie, c: img, d: map[&tie], deg: opening, expr: String::new(), driven: false, off: 0.0, at: None });
+            }
+            candidates.push(Constraint::Equal { a: centre, b: anchor, c: centre, d: img });
+        }
+        for c in candidates {
+            if !self.constraint_holds_of_the_laid_copy(si, &c) {
+                continue;
+            }
+            self.add_constraint_if_independent(si, c);
         }
     }
     /// Whether constraint `c` holds of the sketch as laid out: the solver's own residual for it alone, at the
@@ -1766,10 +1907,10 @@ impl Project {
     /// Returns the pattern id, so it can be edited again. The instances are real entities and reach profiles and
     /// toolpaths.
     pub fn add_pattern(&mut self, si: usize, source: &[Id], kind: PatternKind) -> Id {
-        let instances = self.pattern_instances(si, source, kind);
+        let laid = self.pattern_instances(si, source, kind, None);
         let id = self.alloc_id();
         if let Some(s) = self.sketches.get_mut(si) {
-            s.patterns.push(SketchPattern { id, source: source.to_vec(), kind, instances });
+            s.patterns.push(SketchPattern { id, source: source.to_vec(), kind, instances: laid.instances, centre: laid.centre });
         }
         self.regen_sketch(si);
         self.solve_sketch(si); // the edit ends at the solver: what the copies carry is enforced from here on
@@ -1777,16 +1918,18 @@ impl Project {
     }
     /// Change the parameters of pattern `pi`: remove the old instances and recreate them with the new ones.
     pub fn update_pattern(&mut self, si: usize, pi: usize, kind: PatternKind) {
-        let (source, old) = match self.sketches.get(si).and_then(|s| s.patterns.get(pi)) {
-            Some(p) => (p.source.clone(), p.instances.clone()),
+        let (source, old, owned) = match self.sketches.get(si).and_then(|s| s.patterns.get(pi)) {
+            Some(p) => (p.source.clone(), p.instances.clone(), p.centre),
             None => return,
         };
-        self.delete_entities(si, &old); // Remove the old copies and the points they orphan.
-        let instances = self.pattern_instances(si, &source, kind);
+        self.delete_entities(si, &old); // Remove the old copies and the points they orphan; the recorded centre stands.
+        let laid = self.pattern_instances(si, &source, kind, owned);
         if let Some(p) = self.sketches.get_mut(si).and_then(|s| s.patterns.get_mut(pi)) {
             p.kind = kind;
-            p.instances = instances;
+            p.instances = laid.instances;
+            p.centre = laid.centre;
         }
+        self.prune_orphan_sketch_points(si); // a centre the re-layout moved off is no longer recorded and goes
         self.regen_sketch(si);
         self.solve_sketch(si); // the edit ends at the solver: what the copies carry is enforced from here on
     }
@@ -1796,12 +1939,15 @@ impl Project {
             Some(p) => p.instances.clone(),
             None => return,
         };
-        self.delete_entities(si, &old);
+        // The record goes first, so the orphan sweep inside the delete takes the centre the pattern put -
+        // with its pin, as it takes the copies' points with their clones. A centre picked from geometry is
+        // not recorded and stays.
         if let Some(s) = self.sketches.get_mut(si) {
             if pi < s.patterns.len() {
                 s.patterns.remove(pi);
             }
         }
+        self.delete_entities(si, &old);
         self.regen_sketch(si);
     }
     /// Index of the pattern that instance entity `eid` belongs to, so a click can reopen it for editing.

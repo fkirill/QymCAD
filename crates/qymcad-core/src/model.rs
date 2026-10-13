@@ -1096,6 +1096,20 @@ pub struct SketchPattern {
     pub kind: PatternKind,
     #[serde(default)]
     pub instances: Vec<Id>,
+    /// The centre point this pattern put on empty sheet, going when the pattern goes. A centre that landed
+    /// on existing geometry is not recorded and never taken: `None`.
+    #[serde(default)]
+    pub centre: Option<Id>,
+}
+
+/// What laying a pattern's instances answered: the entities laid, and the centre point the circular kind
+/// OWNS - freshly put on empty sheet, or found being the very point this pattern put before, for a
+/// re-layout finds what the first apply laid. `None` when the centre landed on existing geometry, which is
+/// not the pattern's to take away. The quick edit tool lays no pattern record and its put centre stays
+/// like a drawn point.
+pub struct LaidPattern {
+    pub instances: Vec<Id>,
+    pub centre: Option<Id>,
 }
 
 /// Source of a projection into a sketch: a reference to body geometry by persistent name rather than by
@@ -2200,6 +2214,11 @@ impl Project {
         let count = count.max(1);
         // A full circle (360 degrees) spreads `count` copies around it; a sector holds `count` copies within it.
         let step = if (total_deg - 360.0).abs() < 1e-6 { total_deg / count as f64 } else { total_deg / count.max(2) as f64 };
+        let centre = match self.pattern_centre_point(si, cx, cy) {
+            Some(c) => c.id,
+            None => return,
+        };
+        let from = self.sketches.get(si).map_or(0, |s| s.constraints.len());
         for k in 1..count {
             let ang = (step * k as f64).to_radians();
             let (s_, c_) = (ang.sin(), ang.cos());
@@ -2210,16 +2229,18 @@ impl Project {
                     let (vx, vy) = (x - cx, y - cy);
                     (cx + vx * c_ - vy * s_, cy + vx * s_ + vy * c_)
                 },
-                sketch::ConstraintCarry::Rotational { deg: step * k as f64 },
+                sketch::ConstraintCarry::Rotational { centre, deg: step * k as f64, from },
             );
         }
         self.regen_sketch(si); // the loops once, for every copy
         self.solve_sketch(si); // the edit ends at the solver: what the copies carry is enforced from here on
     }
 
-    /// Create the pattern instances without recording the pattern. Returns the ids of the new entities.
-    fn pattern_instances(&mut self, si: usize, source: &[Id], kind: PatternKind) -> Vec<Id> {
+    /// Create the pattern instances without recording the pattern. Returns the ids of the new entities and,
+    /// for the circular kind, the centre point it owns - `owned` is the point a re-layout put before.
+    fn pattern_instances(&mut self, si: usize, source: &[Id], kind: PatternKind, owned: Option<Id>) -> LaidPattern {
         let mut out = Vec::new();
+        let mut centre = None;
         match kind {
             PatternKind::Linear { dx, dy, count, dx2, dy2, count2 } => {
                 // Grid: i along (dx,dy), j along (dx2,dy2). (0,0) is the original and is not duplicated.
@@ -2236,22 +2257,26 @@ impl Project {
             PatternKind::Circular { cx, cy, count, total_deg } => {
                 let count = count.max(1);
                 let step = if (total_deg - 360.0).abs() < 1e-6 { total_deg / count as f64 } else { total_deg / count.max(2) as f64 };
-                for k in 1..count {
-                    let ang = (step * k as f64).to_radians();
-                    let (s_, c_) = (ang.sin(), ang.cos());
-                    out.extend(self.dup_entities_unbuilt(
-                        si,
-                        source,
-                        move |x, y| {
-                            let (vx, vy) = (x - cx, y - cy);
-                            (cx + vx * c_ - vy * s_, cy + vx * s_ + vy * c_)
-                        },
-                        sketch::ConstraintCarry::Rotational { deg: step * k as f64 },
-                    ));
+                if let Some(c) = self.pattern_centre_point(si, cx, cy) {
+                    centre = (c.put || owned == Some(c.id)).then_some(c.id);
+                    let from = self.sketches.get(si).map_or(0, |s| s.constraints.len());
+                    for k in 1..count {
+                        let ang = (step * k as f64).to_radians();
+                        let (s_, c_) = (ang.sin(), ang.cos());
+                        out.extend(self.dup_entities_unbuilt(
+                            si,
+                            source,
+                            move |x, y| {
+                                let (vx, vy) = (x - cx, y - cy);
+                                (cx + vx * c_ - vy * s_, cy + vx * s_ + vy * c_)
+                            },
+                            sketch::ConstraintCarry::Rotational { centre: c.id, deg: step * k as f64, from },
+                        ));
+                    }
                 }
             }
         }
-        out
+        LaidPattern { instances: out, centre }
     }
 
     /// Fillet the corner at vertex `pid`, when exactly two edges meet there. The inner side is chosen by
