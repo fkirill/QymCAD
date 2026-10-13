@@ -2168,32 +2168,34 @@ impl Project {
                 let (perpx, perpy) = (vx - projx, vy - projy);
                 (x - 2.0 * perpx, y - 2.0 * perpy)
             },
-            false,
+            sketch::ConstraintCarry::None,
         );
     }
 
     /// MIRROR THE ENTITIES (as a copy) ABOUT THE POINT (px, py): each point goes to the far side of it, the same distance
     /// off - a half turn about it, so an arc keeps its way round.
     pub fn mirror_about_point(&mut self, si: usize, eids: &[Id], px: f64, py: f64) {
-        self.dup_entities(si, eids, |x, y| (2.0 * px - x, 2.0 * py - y), false);
+        self.dup_entities(si, eids, |x, y| (2.0 * px - x, 2.0 * py - y), sketch::ConstraintCarry::None);
     }
 
     /// Duplicate the selected entities with an offset of (dx, dy) and return the ids of the copies. Used by
     /// the interactive copy command, which reads as base point then target.
     pub fn copy_entities(&mut self, si: usize, eids: &[Id], dx: f64, dy: f64) -> Vec<Id> {
-        self.dup_entities(si, eids, |x, y| (x + dx, y + dy), true) // a copy carries its internal constraints and dimensions
+        self.dup_entities(si, eids, |x, y| (x + dx, y + dy), sketch::ConstraintCarry::Internal)
+        // a copy carries its internal constraints and dimensions
     }
 
     /// Linear array: `count` copies spaced by (dx, dy).
     pub fn array_linear(&mut self, si: usize, eids: &[Id], dx: f64, dy: f64, count: u32) {
         for k in 1..count.max(1) {
             let (ox, oy) = (dx * k as f64, dy * k as f64);
-            self.dup_entities_unbuilt(si, eids, |x, y| (x + ox, y + oy), false);
+            self.dup_entities_unbuilt(si, eids, |x, y| (x + ox, y + oy), sketch::ConstraintCarry::None);
         }
         self.regen_sketch(si); // the loops once, for every copy
     }
 
-    /// Circular array: `count` copies around (cx, cy) spanning `total_deg` in total.
+    /// Circular array: `count` copies around (cx, cy) spanning `total_deg` in total. Each copy carries the
+    /// constraints of what it copies when they hold of it as laid out, and the edit ends at the solver.
     pub fn array_circular(&mut self, si: usize, eids: &[Id], cx: f64, cy: f64, count: u32, total_deg: f64) {
         let count = count.max(1);
         // A full circle (360 degrees) spreads `count` copies around it; a sector holds `count` copies within it.
@@ -2208,10 +2210,11 @@ impl Project {
                     let (vx, vy) = (x - cx, y - cy);
                     (cx + vx * c_ - vy * s_, cy + vx * s_ + vy * c_)
                 },
-                false,
+                sketch::ConstraintCarry::Rotational { deg: step * k as f64 },
             );
         }
         self.regen_sketch(si); // the loops once, for every copy
+        self.solve_sketch(si); // the edit ends at the solver: what the copies carry is enforced from here on
     }
 
     /// Create the pattern instances without recording the pattern. Returns the ids of the new entities.
@@ -2226,7 +2229,7 @@ impl Project {
                             continue;
                         }
                         let (ox, oy) = (dx * i as f64 + dx2 * j as f64, dy * i as f64 + dy2 * j as f64);
-                        out.extend(self.dup_entities_unbuilt(si, source, |x, y| (x + ox, y + oy), false));
+                        out.extend(self.dup_entities_unbuilt(si, source, |x, y| (x + ox, y + oy), sketch::ConstraintCarry::None));
                     }
                 }
             }
@@ -2243,7 +2246,7 @@ impl Project {
                             let (vx, vy) = (x - cx, y - cy);
                             (cx + vx * c_ - vy * s_, cy + vx * s_ + vy * c_)
                         },
-                        false,
+                        sketch::ConstraintCarry::Rotational { deg: step * k as f64 },
                     ));
                 }
             }
