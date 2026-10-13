@@ -540,6 +540,55 @@ fn seam_cleaned(loop_: &[Point2]) -> Vec<Point2> {
     out
 }
 
+/// The area a closed polygon encloses, unsigned - the same shoelace the loop signature of
+/// `replace_contours` uses, on the point polygon alone.
+fn poly_area(pts: &[Point2]) -> f64 {
+    let mut area = 0.0;
+    for i in 0..pts.len() {
+        let (a, b) = (pts[i], pts[(i + 1) % pts.len()]);
+        area += a.x * b.y - b.x * a.y;
+    }
+    (0.5 * area).abs()
+}
+
+/// The box of a polygon, as `round::contour_box` gives it for a contour: [min x, min y, max x, max y].
+fn poly_box(pts: &[Point2]) -> [f64; 4] {
+    pts.iter().fold([f64::MAX, f64::MAX, f64::MIN, f64::MIN], |b, p| [b[0].min(p.x), b[1].min(p.y), b[2].max(p.x), b[3].max(p.y)])
+}
+
+/// Whether every point of `inner` lies in or on the polygon `outer` - the containment the cover is gated
+/// on. A tile's vertices sit ON the boundary of the region it came from (the cut ends of a dividing line
+/// land on the old boundary), and a strict ray cast leaves a boundary point on the wrong side as often as
+/// the right one, so a miss is retried against the boundary itself, within the same relative tolerance
+/// `polys_touch` works with. The centroid goes first: a tile far from the region leaves before any vertex
+/// is tried.
+fn region_inside(inner: &[Point2], outer: &[Point2]) -> bool {
+    if inner.len() < 3 || outer.len() < 3 {
+        return false;
+    }
+    let (sx, sy) = inner.iter().fold((0.0, 0.0), |(ax, ay), p| (ax + p.x, ay + p.y));
+    if !point_in_poly(outer, Point2::new(sx / inner.len() as f64, sy / inner.len() as f64)) {
+        return false;
+    }
+    let (mut lo, mut hi) = (Point2::new(f64::MAX, f64::MAX), Point2::new(f64::MIN, f64::MIN));
+    for p in outer {
+        lo = Point2::new(lo.x.min(p.x), lo.y.min(p.y));
+        hi = Point2::new(hi.x.max(p.x), hi.y.max(p.y));
+    }
+    let tol = ((hi.x - lo.x).hypot(hi.y - lo.y) * 1e-6).max(1e-9);
+    inner.iter().all(|p| {
+        point_in_poly(outer, *p) || {
+            (0..outer.len()).any(|i| {
+                let (b, c) = (outer[i], outer[(i + 1) % outer.len()]);
+                let (vx, vy) = (c.x - b.x, c.y - b.y);
+                let l2 = vx * vx + vy * vy;
+                let t = if l2 > 1e-18 { (((p.x - b.x) * vx + (p.y - b.y) * vy) / l2).clamp(0.0, 1.0) } else { 0.0 };
+                (p.x - (b.x + t * vx)).hypot(p.y - (b.y + t * vy)) <= tol
+            })
+        }
+    })
+}
+
 /// THE HORIZONTAL AND VERTICAL DIMENSIONS THAT MEASURE A WHOLE SIDE: a `Distance` along an axis (1 or 2) between two
 /// points that both turn (`turns`), the two standing on that axis's line, so the measure along the axis is the whole
 /// length between them. Answers their indices. A dimension of the projection of a slanted line is not among them: along

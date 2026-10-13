@@ -902,6 +902,70 @@ impl FeatureKind {
         }
     }
 
+    /// The region lists a kind's selection holds: the profiles every covered kind names, and the filled
+    /// contours where the kind keeps them beside. `None` for a kind that selects no regions.
+    pub fn region_selection(&self) -> Option<(&[Id], Option<&[Id]>)> {
+        match self {
+            FeatureKind::Extrude { profiles, fill, .. } | FeatureKind::Combine { profiles, fill, .. } => Some((profiles, Some(fill))),
+            FeatureKind::Revolve { profiles, .. } | FeatureKind::Sweep { profiles, .. } => Some((profiles, None)),
+            _ => None,
+        }
+    }
+
+    /// The same lists, lent for writing: one lender keeps the arms of the re-tiling walk uniform.
+    pub fn region_selection_mut(&mut self) -> Option<(&mut Vec<Id>, Option<&mut Vec<Id>>)> {
+        match self {
+            FeatureKind::Extrude { profiles, fill, .. } | FeatureKind::Combine { profiles, fill, .. } => Some((profiles, Some(fill))),
+            FeatureKind::Revolve { profiles, .. } | FeatureKind::Sweep { profiles, .. } => Some((profiles, None)),
+            _ => None,
+        }
+    }
+
+    /// THE SELECTION FOLLOWS THE TILES of a re-tiling of its sketch, written into the feature's own
+    /// parameters once, at the edit. `cover` maps an old region to the regions that replaced it - a
+    /// subdivision seen from either side, or a merge; `fresh` pairs every closed contour the edit minted
+    /// with the region it nests directly inside (0 at the root). The lists stay sorted and without
+    /// repeats, as the profile resolution expects. Answers whether anything was written. A loft holds
+    /// one contour per section, which a covered area cannot be folded into, and it selects no region
+    /// lists here.
+    pub fn follow_the_tiles(&mut self, cover: &std::collections::HashMap<Id, Vec<Id>>, fresh: &[(Id, Id)]) -> bool {
+        let mut wrote = false;
+        if let Some((profiles, fill)) = self.region_selection_mut() {
+            wrote = retile_list(cover, profiles);
+            if let Some(f) = fill {
+                if retile_list(cover, f) {
+                    wrote = true;
+                }
+            }
+        }
+        if fresh.is_empty() {
+            return wrote;
+        }
+        // A closed region the edit minted inside the selected area joins it, so new geometry there does
+        // not become a hole: into `fill` where the kind keeps one, into `profiles` otherwise. Fresh ids
+        // only - a contour that survived by its id and merely moved in keeps today's hole semantics.
+        if let Some((profiles, mut fill)) = self.region_selection_mut() {
+            let selected: std::collections::HashSet<Id> = profiles.iter().copied().chain(fill.iter().flat_map(|f| f.iter().copied())).collect();
+            for (child, parent) in fresh {
+                if *parent != 0 && selected.contains(parent) && !selected.contains(child) {
+                    if let Some(f) = &mut fill {
+                        f.push(*child);
+                    } else {
+                        profiles.push(*child);
+                    }
+                    wrote = true;
+                }
+            }
+            profiles.sort_unstable();
+            profiles.dedup();
+            if let Some(f) = &mut fill {
+                f.sort_unstable();
+                f.dedup();
+            }
+        }
+        wrote
+    }
+
     /// Re-point the body input of a node from `from` to `to`, leaving sketches alone. Used when restructuring
     /// chains — for example while editing a grouped cut — so that consumers of the old last body point at the
     /// new one.
@@ -1255,4 +1319,24 @@ impl FeatureKind {
             _ => self.consumed_body().into_iter().collect(),
         }
     }
+}
+
+/// One selection list through the cover map of a re-tiling: an old region gives way to the regions that
+/// replaced it. The list comes back sorted and without repeats; answers whether it changed.
+fn retile_list(cover: &std::collections::HashMap<Id, Vec<Id>>, list: &mut Vec<Id>) -> bool {
+    if !list.iter().any(|cid| cover.contains_key(cid)) {
+        return false;
+    }
+    let mut out: Vec<Id> = Vec::with_capacity(list.len() + 1);
+    for &cid in list.iter() {
+        match cover.get(&cid) {
+            Some(tiles) => out.extend_from_slice(tiles),
+            None => out.push(cid),
+        }
+    }
+    out.sort_unstable();
+    out.dedup();
+    let wrote = out != *list;
+    *list = out;
+    wrote
 }
