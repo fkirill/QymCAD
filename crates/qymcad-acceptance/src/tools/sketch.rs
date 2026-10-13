@@ -2228,7 +2228,7 @@ pub static CIRCULAR_PATTERN: Tool = Tool {
         notes: 0,
         constraints: Some(10),
         dof: None,
-        box_of: Some(([-36.650635, -38.480762], [30.0, 25.0])),
+        box_of: Some(([-32.320508, -35.980762], [30.0, 20.0])),
         size_of: None,
         under: &[],
     },
