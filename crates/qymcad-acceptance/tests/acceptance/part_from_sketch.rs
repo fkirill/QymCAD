@@ -116,6 +116,41 @@ probe! {
 }
 
 probe! {
+    /// THE SELECTION FOLLOWS THE TILES: a line drawn across the extruded profile re-tiles its region, and the body
+    /// keeps its shape - the extrude's selection holds both halves, and reopening the node says so in the bar.
+    fn a_line_across_the_profile_keeps_the_extruded_body() {
+        let mut s = Session::start();
+        build::into_the_first_part(&mut s);
+        build::rectangle_on_xy(&mut s);
+        finish(&mut s);
+        let extrude = s.word("tb-extrude-hint");
+        s.press_hint(&extrude);
+        let length = s.word("f-length");
+        s.fill(&length, "10").key(Key::Enter);
+        let before = body(&mut s).volume;
+        assert!((before - 12000.0).abs() < 1.0, "the 40 by 30 profile extruded 10 is 12000, and the body is {before}");
+        // the sketch is re-entered by its row and a line is laid across the profile
+        let name = s.document().sketches[0].name.clone();
+        let row = s.find(&name, qymcad::pos2(0.0, 300.0)).unwrap_or_else(|| panic!("{name:?} is not in the tree; on screen: {:?}", s.words()));
+        s.double_click(row.center());
+        build::line(&mut s, (20.0, 0.0), (20.0, 30.0));
+        finish(&mut s);
+        let now = body(&mut s);
+        assert!((now.volume - 12000.0).abs() < 1.0, "the body is the same box after the re-tiling, and is {}", now.volume);
+        // the extrusion reopened by its row offers the widened selection: the bar counts the regions taken
+        let lead = s.word("cmd-extrude");
+        let left = s.canvas().min.x;
+        let rows: Vec<qymcad::Rect> = s.words_at().into_iter().filter(|(w, r)| r.max.x < left && w.starts_with(&lead)).map(|(_, r)| r).collect();
+        let [row] = rows.as_slice() else { panic!("the row of the extrusion is not one row of the tree: {rows:?}") };
+        s.double_click(row.center());
+        let profiles = s.word("cmd-profiles-n").split('{').next().unwrap_or_default().trim().to_string();
+        let counted = s.words().into_iter().find(|w| w.starts_with(&profiles)).unwrap_or_else(|| panic!("the bar does not count the contours taken; on screen: {:?}", s.words()));
+        assert!(counted.ends_with('2'), "the reopened extrusion takes both halves, and the bar says {counted:?}");
+        s.key(Key::Escape);
+    }
+}
+
+probe! {
     /// REVOLVE ABOUT THE X AXIS: the 40 by 30 rectangle turned all the way round makes a cylinder of radius 30 and
     /// length 40.
     fn a_revolve_about_x_makes_a_cylinder() {

@@ -13,6 +13,7 @@ mod tests {
     use super::super::{hand::Hand, App};
     mod check_all;
     mod save_and_reopen;
+    mod the_divided_profile;
     mod the_faults;
     mod the_view;
     use check_all::check_all;
@@ -487,10 +488,7 @@ mod tests {
         app.finish_sketch_edit();
         check_all(&mut app, "a rectangle was drawn", &mut problems);
 
-        app.chosen.sel = super::super::Sel::Sketch(si);
-        let mut hand = Hand::new(&mut app);
-        hand.look_at([30.0, 20.0, 10.0], 8.0).tool(1).set("height", 25.0).enter();
-        check_all(&mut app, "the housing was extruded", &mut problems);
+        the_divided_profile::the_housing_extruded_and_divided(&mut app, si, &mut problems);
 
         // --- FILLETS ON THE VERTICAL EDGES ---
         let body = app.project.timeline.iter().rev().find_map(|n| n.kind.body()).expect("the body");
