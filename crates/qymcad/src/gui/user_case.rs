@@ -1411,6 +1411,112 @@ mod tests {
             problems.push(format!("[step] the chamfer of 4 exactly to the step: the solid is {solid:?} mm^3, 3760 expected; status {}", app.status));
         }
 
+        // --- A RING LAID BY A CIRCULAR PATTERN: the tool made for repeating constrained geometry. Two chords
+        // joined by a coincidence are patterned about the centre; every copy carries the coincidence between
+        // its own two chords, a junction of a copy dragged takes both its chords with it, and the ring
+        // extrudes as one closed contour. ---
+        app.exit_context();
+        let ring = app.project.add_part("Ring");
+        app.enter_component(ring);
+        let si11 = app.create_sketch_on(qymcad_core::feature::SketchPlane::default());
+        {
+            let line_hint = crate::i18n::tr("tb-line-hint");
+            let mut hand = Hand::new(&mut app);
+            // A CHAIN FINISHED BY ESCAPE LEAVES THE TOOL IN HAND, and the button of a tool in hand puts it
+            // down: each chord is laid by taking the line, clicking twice, Escape, and the button once more.
+            // The second chord's near end is drawn clear of the first's far end - the pointer would snap to
+            // it and share the point, and the junction is to be tied by a constraint, as ends drawn apart are.
+            hand.sk_tool(1); // the line, and the flat canvas at the scale the sketch checks draw at
+            hand.click2d(20.0, 0.0).click2d(10.0, 17.0).key(egui::Key::Escape); // the first chord, from 0 to 60 degrees of a 20 circle
+            hand.press_hint(&line_hint); // down, the arrow in hand
+            hand.press_hint(&line_hint);
+            hand.click2d(13.0, 21.0).click2d(-10.0, 17.0).key(egui::Key::Escape); // the second, on to 120 degrees, its near end off to the side of the first's far end
+            hand.press_hint(&line_hint); // down, the arrow in hand
+            hand.click2d(10.0, 17.0); // the far end of the first chord
+            hand.shift_click2d(13.0, 21.0); // the near end of the second, beside it
+            let coincident = crate::i18n::tr("con-coincident-hint");
+            if !hand.press_hint(&coincident) {
+                problems.push(format!("[ring] the coincidence button was not found; status: {}", hand.app.status));
+            }
+        }
+        check_all(&mut app, "the ring's chords were joined", &mut problems);
+        let source_junction = app.project.sketches.get(si11).and_then(|s| {
+            let system = s.system_ids();
+            s.points.iter().filter(|p| !system.contains(&p.id)).find(|p| s.points.iter().filter(|q| (q.x - p.x).hypot(q.y - p.y) < 1e-6).count() >= 2).map(|p| (p.x, p.y))
+        });
+        // the pair patterned three times about the origin - the bar's own numbers - closing the ring
+        {
+            let mut hand = Hand::new(&mut app);
+            hand.click2d(15.0, 8.5); // the middle of the first chord
+            hand.shift_click2d(1.5, 19.0); // the middle of the second
+            let pattern = crate::i18n::tr("tb-circ-array-hint");
+            if !hand.press_hint(&pattern) {
+                problems.push(format!("[ring] the circular pattern button was not found; status: {}", hand.app.status));
+            }
+            hand.click2d(0.0, 0.0); // the centre to turn about
+            hand.key(egui::Key::Enter).key(egui::Key::Enter);
+        }
+        check_all(&mut app, "the ring was patterned", &mut problems);
+        let joined = app.project.sketches.get(si11).map(|s| {
+            let lines = s.entities.iter().filter(|e| matches!(e.kind, qymcad_core::model::EntityKind::Line { .. }) && !e.construction).count();
+            let ties = s.constraints.iter().filter(|c| matches!(c, qymcad_core::model::Constraint::Coincident { .. })).count();
+            (lines, ties)
+        });
+        if joined != Some((6, 3)) {
+            problems.push(format!("[ring] the patterned ring holds {joined:?}, six chords joined by three coincidences were expected; status: {}", app.status));
+        }
+        // A JUNCTION OF A COPY DRAGGED ALONG: both its chords follow the coincidence the copy carries. The
+        // copy's junction is a pair of ends standing in one place away from the source's own, and what the
+        // drag owes is that the pair travels as one - the copy's ends held together by the constraint it
+        // carries, not left one behind.
+        let copy_junction = app.project.sketches.get(si11).and_then(|s| {
+            let system = s.system_ids();
+            s.points
+                .iter()
+                .filter(|p| !system.contains(&p.id))
+                .find(|p| {
+                    let far = source_junction.is_none_or(|j| (p.x - j.0).hypot(p.y - j.1) > 1.0);
+                    far && s.points.iter().filter(|q| (q.x - p.x).hypot(q.y - p.y) < 1e-6).count() >= 2
+                })
+                .map(|p| (p.x, p.y))
+        });
+        if let Some(at) = copy_junction {
+            let ids: Vec<u64> = app.project.sketches[si11].points.iter().filter(|q| (q.x - at.0).hypot(q.y - at.1) < 1e-3).map(|q| q.id).collect();
+            {
+                let mut hand = Hand::new(&mut app);
+                hand.drag2d(at, (at.0 + 1.0, at.1 + 1.0));
+            }
+            let after = app.project.sketches.get(si11).map(|s| {
+                let moved: Vec<(f64, f64)> = ids.iter().filter_map(|id| s.points.iter().find(|q| q.id == *id)).map(|q| (q.x, q.y)).collect();
+                let together = moved.len() == 2 && (moved[0].0 - moved[1].0).hypot(moved[0].1 - moved[1].1) < 1e-3;
+                let gone = moved.iter().all(|m| (m.0 - at.0).hypot(m.1 - at.1) > 0.5);
+                (together, gone)
+            });
+            if after != Some((true, true)) {
+                problems.push(format!("[ring] dragging the junction of a copy left the ends {after:?}, together and away from where they stood was expected; status: {}", app.status));
+            }
+        } else {
+            problems.push("[ring] no junction of a copy stands apart from the source's after the pattern".to_string());
+        }
+        check_all(&mut app, "a junction of the ring was dragged", &mut problems);
+        app.finish_sketch_edit();
+        app.chosen.sel = super::super::Sel::Sketch(si11);
+        {
+            let mut hand = Hand::new(&mut app);
+            hand.look_at([0.0, 0.0, 2.0], 30.0).tool(1).op(0).set("height", 5.0).enter();
+        }
+        check_all(&mut app, "the ring was extruded", &mut problems);
+        // THE RING LOOKED AT AS A PICTURE, through the rasteriser the help draws by
+        app.viewing.mode_3d = true;
+        app.viewing.cam.init = true;
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(700.0, 600.0));
+        crate::gui::fit3d(&mut app.viewing.cam, &app.project, rect);
+        let basis = app.viewing.cam.basis();
+        let picture = qymcad_render::rasterize_3d(&app.painting(), rect, &basis, 1.0, 1.0).and_then(|img| crate::gui::color_image_to_png(&img));
+        if picture.as_ref().is_none_or(|png| png.is_empty()) {
+            problems.push(format!("[ring] the extruded ring drew no picture; status: {}", app.status));
+        }
+
         // --- PARTS WITH THE SAME SET OF TOOLS IN A DIFFERENT ORDER ---
         //
         // Exactly what was asked for: whichever part is entered, all of the operations are there while the
