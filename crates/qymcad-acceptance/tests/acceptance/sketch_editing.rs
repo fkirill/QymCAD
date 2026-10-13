@@ -488,6 +488,86 @@ probe! {
     }
 }
 
+/// TWO CHORDS JOINED BY A COINCIDENCE: a line from 0 to 60 degrees of a circle of 20 about the origin, a
+/// second from 61 to 120, their nearest ends a degree apart and then tied by the coincidence button, as a
+/// person ties ends drawn apart. Answered with the place of the junction.
+fn tied_chords(s: &mut Session) -> (f64, f64) {
+    // whole millimetres, where the pointer puts them exactly: the ends to pick are where they were drawn
+    line(s, (20.0, 0.0), (10.0, 17.0));
+    line(s, (9.0, 18.0), (-10.0, 17.0));
+    pick(s, 10.0, 17.0, false);
+    pick(s, 9.0, 18.0, true);
+    let coincident = s.word("con-coincident-hint");
+    s.press_hint(&coincident);
+    let places = s.document().sketches[0].places.clone();
+    places
+        .iter()
+        .find(|p| places.iter().filter(|q| (q[0] - p[0]).hypot(q[1] - p[1]) < 1e-6).count() >= 2)
+        .map(|p| (p[0], p[1]))
+        .unwrap_or_else(|| panic!("no two ends stand in one place after the coincidence: {places:?}"))
+}
+
+/// How many points of the sketch stand within `tol` of `p`.
+fn places_at(s: &mut Session, p: (f64, f64), tol: f64) -> usize {
+    s.document().sketches[0].places.iter().filter(|q| (q[0] - p.0).hypot(q[1] - p.1) < tol).count()
+}
+
+/// Lay the joined chords out in a circular pattern of `count` copies spanning the whole circle about the
+/// origin: both chords picked, the tool taken, the bar's numbers set, the centre clicked, Enter.
+fn pattern_the_chords(s: &mut Session, count: &str) {
+    pick(&mut *s, 15.0, 8.5, false); // the middle of the first chord
+    pick(&mut *s, -0.25, 17.25, true); // the middle of the second
+    take(s, "tb-circ-array-hint");
+    let count_field = s.word("opt-count");
+    s.fill(&count_field, count);
+    let fields = bar_fields(s);
+    fill_widget(s, &fields[1], "360");
+    s.click_on_sketch(0.0, 0.0); // the centre to turn about
+    s.key(Key::Enter).key(Key::Enter);
+}
+
+probe! {
+    /// A CIRCULAR PATTERN CARRIES THE CONSTRAINT OF WHAT IT COPIES: two chords joined by a coincidence are
+    /// patterned about the centre as one selection, and every copy carries the coincidence between its own
+    /// two chords - the ring closes by constraint, and moving the end of one chord of a copy takes the other
+    /// with it.
+    fn a_circular_pattern_of_constrained_chords_keeps_the_copies_joined() {
+        let mut s = empty_sketch();
+        let junction = tied_chords(&mut s);
+        pattern_the_chords(&mut s, "6");
+        assert!(counts(&mut s).0 == 12, "the two chords and their five copies: {:?}", counts(&mut s));
+        let sk = s.document().sketches[0].clone();
+        assert!(sk.constraints == 6, "the source's tie and one for every copy: {} constraints stand", sk.constraints);
+        assert!(sk.constraint_kinds.iter().all(|k| k == "Coincident"), "every carried constraint is a coincidence: {:?}", sk.constraint_kinds);
+        // THE END OF ONE CHORD OF THE FIRST COPY DRAGGED: the other chord follows the coincidence it carries.
+        // The first copy stands a sixth of the way round from the source, its junction where the source's
+        // junction came to when it was turned by 60 degrees.
+        let (sn, cs) = 60_f64.to_radians().sin_cos();
+        let at = (junction.0 * cs - junction.1 * sn, junction.0 * sn + junction.1 * cs);
+        assert!(places_at(&mut s, at, 1e-3) == 2, "the copy's two ends stand together where it was laid");
+        let away = (at.0 + 1.0, at.1 + 1.0);
+        s.drag_on_sketch(at, away);
+        assert!(places_at(&mut s, at, 1e-3) == 0, "an end of the copy stayed behind when its neighbour was dragged from {at:?}");
+        assert!(places_at(&mut s, away, 1e-3) >= 2, "the copy's other chord did not follow the coincidence to {away:?}");
+    }
+}
+
+probe! {
+    /// UNDO OF A PATTERN THAT CARRIED CONSTRAINTS: the copies go together with their coincidences, and the
+    /// source chords stand with their own one and nothing more.
+    fn undo_of_a_circular_pattern_returns_the_sources_with_their_constraints() {
+        let mut s = empty_sketch();
+        let _ = tied_chords(&mut s);
+        pattern_the_chords(&mut s, "6");
+        assert!(counts(&mut s).0 == 12, "the pattern was laid: {:?}", counts(&mut s));
+        s.chord(Modifiers::COMMAND, Key::Z);
+        assert!(counts(&mut s).0 == 2, "the copies went with the undo: {:?}", counts(&mut s));
+        let sk = s.document().sketches[0].clone();
+        assert!(sk.constraints == 1, "the clones went with the copies; {} constraints stand", sk.constraints);
+        assert!(sk.constraint_kinds.iter().all(|k| k == "Coincident"), "the source keeps its own tie: {:?}", sk.constraint_kinds);
+    }
+}
+
 probe! {
     /// THE ENTER THE BAR ASKS FOR APPLIES AT ONCE: "set the step and count above, press Enter" - one press, not two.
     fn the_enter_the_bar_asks_for_applies_at_once() {
