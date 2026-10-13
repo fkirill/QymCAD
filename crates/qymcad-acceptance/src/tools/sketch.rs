@@ -2201,7 +2201,9 @@ pub static LINEAR_PATTERN: Tool = Tool {
 /// CIRCULAR_PATTERN: the picked line - drawn from the origin, its start held on the upright line under it, as
 /// the line tool holds it - repeated three times about the origin, clicked as the centre: at 0, 120 and 240
 /// degrees. The start stands at the centre of the turn, stays where it is, and every copy keeps it held on the
-/// axis line. Turned 120 degrees the far end (30, 20) comes to (-32.32, 15.98); turned 240, to (2.32, -35.98).
+/// axis line; each copy is also pinned about the centre - an angle at the centre for the step, a turn tie, an
+/// equal length from the centre. Turned 120 degrees the far end (30, 20) comes to (-32.32, 15.98); turned 240,
+/// to (2.32, -35.98).
 pub static CIRCULAR_PATTERN: Tool = Tool {
     id: "sketch.circular-pattern",
     flow: Flow::Command,
@@ -2224,7 +2226,7 @@ pub static CIRCULAR_PATTERN: Tool = Tool {
         splines: 0,
         texts: 0,
         notes: 0,
-        constraints: Some(4),
+        constraints: Some(10),
         dof: None,
         box_of: Some(([-36.650635, -38.480762], [30.0, 25.0])),
         size_of: None,
