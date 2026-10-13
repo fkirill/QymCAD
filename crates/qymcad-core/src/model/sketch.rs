@@ -15,8 +15,10 @@ pub(super) enum ConstraintCarry {
     Internal,
     /// The circular pattern's rule: a constraint that touches the copied set is cloned onto the copy when it
     /// holds of the copy as laid out - a reference inside the set remapped to the copy's corresponding point,
-    /// a reference outside kept as it is, an angular value turned by the copy's `deg` - and a clone that does
-    /// not hold, or that the solver calls implied, is not laid. What is cloned is what the copied elements
+    /// a reference outside kept as it is, an angular value kept when the constraint lies wholly in the set (a
+    /// rotation preserves it) and otherwise turned by the copy's `deg` into the openings the solver's
+    /// unsigned rows read (see `angular_candidates`) - and a clone that does not hold, or that the solver
+    /// calls implied, is not laid. What is cloned is what the copied elements
     /// carried when the pattern began, `constraints[..from]`: the pattern's own pins speak about the source's
     /// points and would otherwise be cloned onto the later copies, chaining them to the first one. The copy
     /// is then pinned about `centre`, the pattern's centre point, so its place is held as its shape is (see
@@ -32,14 +34,77 @@ pub(super) struct CentrePoint {
     pub(super) put: bool,
 }
 
-/// Turn the angular values a constraint holds by `deg`: a rotation carries an orientation and an angle with
-/// it, as `rotate_entities` turns the turn a rectangle holds itself by. A length, a radius and an arc length
-/// are preserved by a rotation about any centre and keep their value.
-fn turn_angular_values(c: &mut Constraint, deg: f64) {
-    match c {
-        Constraint::Orientation { deg: held, .. } | Constraint::Angle { deg: held, .. } | Constraint::AngleLines { deg: held, .. } => *held += deg,
-        _ => {}
+/// The distance a trim anchor lands a point by (mm): the tolerance the pattern's centre resolves standing
+/// geometry by and the pins judge a laid copy by - an angle's row, in radians, by as many of them.
+const LANDING_TOL: f64 = 5e-3;
+
+/// The opening the solver's unsigned angle rows read for a turn of `deg`: `atan2(|cross|, dot)` never passes
+/// half a turn, so a step past it is held as the opening it leaves - 270 degrees is laid as 90. Which side
+/// of the source the copy stands on is where it was laid, not a sign the row could hold anyway.
+fn unsigned_opening(deg: f64) -> f64 {
+    let deg = deg.rem_euclid(360.0);
+    if deg > 180.0 {
+        360.0 - deg
+    } else {
+        deg
     }
+}
+
+/// The angular values a clone of `c` carries, turned by the copy's `deg`, with `inside` the copied set: an
+/// orientation is absolute and turns whole, its row holding the direction of a line, a thing modulo a half
+/// turn, so no value is folded. An angle or a tie wholly inside the set is preserved by the rotation, every
+/// ray of it turning by the same step, and keeps its value. One that reaches outside the set is turned by
+/// the step, and the unsigned row that judges it cannot say which way the old opening lay, so both openings
+/// it might have come to are answered and the gates keep the one the laid-out copy makes. A length, a radius
+/// and an arc length are preserved by a rotation about any centre and keep their value.
+fn angular_candidates(c: Constraint, deg: f64, inside: &std::collections::HashSet<Id>) -> Vec<Constraint> {
+    let held = match &c {
+        Constraint::Orientation { deg, .. } | Constraint::Angle { deg, .. } | Constraint::AngleLines { deg, .. } => *deg,
+        _ => return vec![c],
+    };
+    let set = |c: &mut Constraint, value: f64| match c {
+        Constraint::Orientation { deg: held, .. } | Constraint::Angle { deg: held, .. } | Constraint::AngleLines { deg: held, .. } => *held = value,
+        _ => {}
+    };
+    if matches!(c, Constraint::Orientation { .. }) {
+        let mut c = c;
+        set(&mut c, held + deg);
+        return vec![c];
+    }
+    if constraint_point_ids(&c).iter().all(|id| inside.contains(id)) {
+        return vec![c];
+    }
+    let forward = unsigned_opening(held + deg);
+    let backward = unsigned_opening(held - deg);
+    if forward == backward {
+        let mut cand = c;
+        set(&mut cand, forward);
+        return vec![cand];
+    }
+    let mut first = c.clone();
+    set(&mut first, forward);
+    let mut second = c;
+    set(&mut second, backward);
+    vec![first, second]
+}
+
+/// The points the pattern pins hold up: an `Angle` or an `Equal` standing on the endpoints of standing
+/// entities (`used`) holds its other points with it, and one naming a point of a going entity (`dead`) is
+/// going itself and holds nothing up. The centre a circular pattern put is such a point, named by the pins
+/// of every copy that stands about it: it dies with the copies, and not before - the quick edit tool, which
+/// lays no record, stands on this alone.
+fn points_held_by_pins(constraints: &[Constraint], used: &std::collections::HashSet<Id>, dead: &std::collections::HashSet<Id>) -> std::collections::HashSet<Id> {
+    let mut held = std::collections::HashSet::new();
+    for c in constraints {
+        if !matches!(c, Constraint::Angle { .. } | Constraint::Equal { .. }) {
+            continue;
+        }
+        let ids = constraint_point_ids(c);
+        if ids.iter().any(|id| used.contains(id)) && !ids.iter().any(|id| dead.contains(id)) {
+            held.extend(ids);
+        }
+    }
+    held
 }
 
 /// A TEXT OBJECT IN A SKETCH: where it sits, how tall it stands, how it is turned, what it says and the
@@ -1098,6 +1163,7 @@ impl Project {
                 protected.extend(ids);
             }
         }
+        protected.extend(points_held_by_pins(&s.constraints, &used, &std::collections::HashSet::new()));
         s.points.retain(|p| used.contains(&p.id) || protected.contains(&p.id));
         let alive: std::collections::HashSet<Id> = s.points.iter().map(|p| p.id).collect();
         s.constraints.retain(|c| constraint_point_ids(c).iter().all(|id| alive.contains(id)));
@@ -1133,6 +1199,7 @@ impl Project {
                     _ => None,
                 })
                 .collect();
+            let dead_points: std::collections::HashSet<Id> = s.entities.iter().filter(|e| eids.contains(&e.id)).flat_map(entity_points).collect();
             s.entities.retain(|e| !eids.contains(&e.id));
             // Drop the constraints attached to a deleted line (horizontal, vertical, parallel, perpendicular,
             // equal, collinear, tangent, midpoint — those referencing its pair of endpoints), or dangling
@@ -1150,15 +1217,17 @@ impl Project {
                     EntityKind::Ellipse { c, ma, mi } => vec![c, ma, mi],
                 })
                 .collect();
-            // Protected free points: the system ones (origin and axes), materialised midpoints, and the
-            // centres the patterns put - a re-layout deletes the old copies through here and must find its
-            // centre still standing. They must not be dropped as orphaned endpoints, or the axes, the
-            // dimensions measured from them and the patterns' pins are lost.
+            // Protected free points: the system ones (origin and axes), materialised midpoints, the centres
+            // the patterns put - a re-layout deletes the old copies through here and must find its centre
+            // still standing - and the points the pattern pins hold up while their copies stand. They must
+            // not be dropped as orphaned endpoints, or the axes, the dimensions measured from them and the
+            // patterns' pins are lost.
             let protected: std::collections::HashSet<Id> = s
                 .system_ids()
                 .into_iter()
                 .chain(s.patterns.iter().filter_map(|p| p.centre))
                 .chain(s.constraints.iter().filter_map(|c| if let Constraint::Midpoint { p, .. } = c { Some(*p) } else { None }))
+                .chain(points_held_by_pins(&s.constraints, &used, &dead_points))
                 .collect();
             s.points.retain(|p| used.contains(&p.id) || protected.contains(&p.id));
             let alive: std::collections::HashSet<Id> = s.points.iter().map(|p| p.id).collect();
@@ -1690,28 +1759,40 @@ impl Project {
         new_ids
     }
     /// The circular pattern's carry (see [`ConstraintCarry::Rotational`]): for every constraint that touches
-    /// the copied set - `Fixed` aside, a pin being placement and not design intent - the candidate the
-    /// rotation leaves behind is built from the copy's own map, checked against the copy as laid out, and
-    /// laid only when it both holds and constrains something the sketch does not already know. A candidate
-    /// that fails is dropped, not bent: no copy is dragged onto a constraint it does not satisfy.
+    /// the copied set - `Fixed` aside, a pin being placement and not design intent, and every constraint
+    /// naming a point of another pattern's copies, which would chain this copy to copies that can go - the
+    /// candidate the rotation leaves behind is built from the copy's own map, checked against the copy as
+    /// laid out, and laid only when it both holds and constrains something the sketch does not already know.
+    /// A candidate that fails is dropped, not bent: no copy is dragged onto a constraint it does not satisfy.
     pub(super) fn carry_rotational(&mut self, si: usize, map: &std::collections::HashMap<Id, Id>, deg: f64, from: usize) {
         let inside: std::collections::HashSet<Id> = map.keys().copied().collect();
-        let cons: Vec<Constraint> = match self.sketches.get(si) {
-            Some(s) => s.constraints.iter().take(from).filter(|c| !matches!(c, Constraint::Fixed { .. }) && constraint_point_ids(c).iter().any(|p| inside.contains(p))).cloned().collect(),
+        // The points other patterns' copies stand on: another pattern's pins about this source speak of its
+        // own copies, and cloned onto this one they chain it to copies that can go - the clones die with
+        // them and the copy floats where they held it. This copy's own pins, laid after the carry, hold it
+        // instead.
+        let (cons, others): (Vec<Constraint>, std::collections::HashSet<Id>) = match self.sketches.get(si) {
+            Some(s) => (
+                s.constraints.iter().take(from).filter(|c| !matches!(c, Constraint::Fixed { .. }) && constraint_point_ids(c).iter().any(|p| inside.contains(p))).cloned().collect(),
+                s.patterns.iter().flat_map(|p| p.instances.iter().filter_map(|&e| s.entities.iter().find(|q| q.id == e))).flat_map(entity_points).collect(),
+            ),
             None => return,
         };
         for c in cons {
-            let mut cand = remap_constraint_via(&c, map);
-            turn_angular_values(&mut cand, deg);
-            if !self.constraint_holds_of_the_laid_copy(si, &cand) {
+            if constraint_point_ids(&c).iter().any(|p| others.contains(p)) {
                 continue;
             }
-            if cand.is_driven() {
-                // A reference dimension constrains nothing, so the independence gate cannot judge it; it is
-                // laid when it holds, as the Copy tool lays it.
-                self.sketches[si].constraints.push(cand);
-            } else {
-                self.add_constraint_if_independent(si, cand);
+            for cand in angular_candidates(c, deg, &inside) {
+                let cand = remap_constraint_via(&cand, map);
+                if !self.constraint_holds_of_the_laid_copy(si, &cand) {
+                    continue;
+                }
+                if cand.is_driven() {
+                    // A reference dimension constrains nothing, so the independence gate cannot judge it; it is
+                    // laid when it holds, as the Copy tool lays it.
+                    self.sketches[si].constraints.push(cand);
+                } else {
+                    self.add_constraint_if_independent(si, cand);
+                }
             }
         }
     }
@@ -1722,16 +1803,15 @@ impl Project {
     /// contract. Within the landing tolerance throughout, the same tolerance the carry judges a laid copy
     /// by, so a centre meant for geometry becomes that geometry.
     pub(super) fn pattern_centre_point(&mut self, si: usize, cx: f64, cy: f64) -> Option<CentrePoint> {
-        const TOL: f64 = 5e-3; // mm, the tolerance a trim anchor lands a point by
         let found = {
             let s = self.sketches.get(si)?;
-            if s.origin != 0 && s.points.iter().any(|q| q.id == s.origin && (q.x - cx).hypot(q.y - cy) <= TOL) {
+            if s.origin != 0 && s.points.iter().any(|q| q.id == s.origin && (q.x - cx).hypot(q.y - cy) <= LANDING_TOL) {
                 return Some(CentrePoint { id: s.origin, put: false });
             }
             let mut best: Option<(f64, Id)> = None;
             for q in s.points.iter().filter(|q| q.id != s.frame) {
                 let d = (q.x - cx).hypot(q.y - cy);
-                if d > TOL {
+                if d > LANDING_TOL {
                     continue;
                 }
                 let better = match best {
@@ -1747,7 +1827,7 @@ impl Project {
         if found.is_some() {
             return found;
         }
-        if cx.hypot(cy) <= TOL {
+        if cx.hypot(cy) <= LANDING_TOL {
             // The crossing of the axes, the origin not yet laid: the centre the sketch already owns.
             let id = self.ensure_origin(si);
             return Some(CentrePoint { id, put: false });
@@ -1776,7 +1856,6 @@ impl Project {
     /// the anchor pin, which the carry leaves out as placement. Every pin passes the carry's own two gates:
     /// it holds of the copy as laid out, and the solver does not call it implied.
     pub(super) fn pin_the_laid_copy(&mut self, si: usize, map: &std::collections::HashMap<Id, Id>, centre: Id, deg: f64) {
-        const TOL: f64 = 5e-3; // mm, the tolerance a trim anchor lands a point by
         let (places, ids) = {
             let Some(s) = self.sketches.get(si) else { return };
             let mut ids: Vec<Id> = map.keys().copied().collect();
@@ -1801,10 +1880,10 @@ impl Project {
         // The tie point is the anchor's own farthest, when it stands far enough for its direction to mean
         // anything: a set of one circle, or one huddled at the centre, has no turn of its own.
         let tie = match (anchor, anchor.and_then(at)) {
-            (Some(_), Some(ap)) => farthest(ap).filter(|&q| at(q).is_some_and(|qp| dist(ap, qp) > TOL)),
+            (Some(_), Some(ap)) => farthest(ap).filter(|&q| at(q).is_some_and(|qp| dist(ap, qp) > LANDING_TOL)),
             _ => None,
         };
-        let lands_on_the_source = ids.iter().all(|&id| matches!((at(id), map.get(&id).and_then(|img| at(*img))), (Some(p), Some(q)) if dist(p, q) <= TOL));
+        let lands_on_the_source = ids.iter().all(|&id| matches!((at(id), map.get(&id).and_then(|img| at(*img))), (Some(p), Some(q)) if dist(p, q) <= LANDING_TOL));
         let mut candidates: Vec<Constraint> = Vec::new();
         if lands_on_the_source {
             for &id in &ids {
@@ -1817,12 +1896,7 @@ impl Project {
             }
         } else if let Some(anchor) = anchor {
             let img = map[&anchor];
-            // THE SOLVER'S ANGLE ROWS ARE UNSIGNED OPENINGS: atan2(|cross|, dot) never passes 180 degrees,
-            // so a step past half a turn is folded to the opening it leaves - 270 degrees is laid as 90.
-            // Which side of the source the copy stands on is where it was laid, not a sign the row could
-            // hold anyway.
-            let step = deg.rem_euclid(360.0);
-            let opening = if step > 180.0 { 360.0 - step } else { step };
+            let opening = unsigned_opening(deg);
             candidates.push(Constraint::Angle { a: anchor, b: centre, c: img, deg: opening, expr: String::new(), driven: false, off: 0.0, at: None });
             if let Some(tie) = tie {
                 candidates.push(Constraint::AngleLines { a: anchor, b: tie, c: img, d: map[&tie], deg: opening, expr: String::new(), driven: false, off: 0.0, at: None });
@@ -1842,14 +1916,13 @@ impl Project {
     /// the line relations - a cross or a dot of two directions - scale with the lengths they span, and sit at
     /// the tolerance over that scale.
     fn constraint_holds_of_the_laid_copy(&self, si: usize, c: &Constraint) -> bool {
-        const TOL: f64 = 5e-3; // mm, the tolerance a trim anchor lands a point by
         let Some(s) = self.sketches.get(si) else { return false };
         let r = crate::solver::residual_per_constraint(&s.points, &self.entity_radii(si), std::slice::from_ref(c))[0];
         if matches!(c, Constraint::Parallel { .. } | Constraint::Perpendicular { .. } | Constraint::Symmetric { .. }) {
             let span = constraint_point_ids(c).iter().filter_map(|p| s.points.iter().find(|q| q.id == *p)).map(|q| q.x.abs().max(q.y.abs())).fold(1.0_f64, f64::max).max(1.0);
-            return r < TOL * span * span;
+            return r < LANDING_TOL * span * span;
         }
-        r < TOL
+        r < LANDING_TOL
     }
     /// Capture the selected geometry of sketch `si` into the clipboard, for pasting into this sketch or
     /// another one. `eids` are the selected entities; the snapshot holds them and all their points (centres,
@@ -1929,7 +2002,7 @@ impl Project {
             p.instances = laid.instances;
             p.centre = laid.centre;
         }
-        self.prune_orphan_sketch_points(si); // a centre the re-layout moved off is no longer recorded and goes
+        self.prune_orphan_sketch_points(si); // a centre the re-layout moved off is no longer recorded and goes, kept only while another's pins hold it up
         self.regen_sketch(si);
         self.solve_sketch(si); // the edit ends at the solver: what the copies carry is enforced from here on
     }

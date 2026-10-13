@@ -31,6 +31,14 @@ fn arc_ends(p: &Project, si: usize, eid: Id) -> (Id, Id) {
     }
 }
 
+/// The ends of line entity `eid`, in the order the line holds them.
+fn line_ends(p: &Project, si: usize, eid: Id) -> (Id, Id) {
+    match p.sketches[si].entity(eid).map(|e| e.kind) {
+        Some(EntityKind::Line { a, b }) => (a, b),
+        _ => panic!("no line {eid}"),
+    }
+}
+
 /// The constraints of the kinds `want`, added after place `from` in the list.
 fn new_of(p: &Project, si: usize, from: usize, want: fn(&Constraint) -> bool) -> Vec<&Constraint> {
     p.sketches[si].constraints[from..].iter().filter(|c| want(c)).collect()
@@ -241,4 +249,80 @@ fn editing_and_deleting_the_pattern_re_derives_and_removes_the_clones() {
     assert!(ties == 2, "the source keeps its own two ties and nothing more; {ties} stand");
     let arcs = p.sketches[si].entities.iter().filter(|e| matches!(e.kind, EntityKind::Arc { .. })).count();
     assert!(arcs == 1, "the copies are gone with the pattern; {arcs} arcs stand");
+}
+
+// AN INTERNAL TIE KEEPS THE ANGLE IT KEPT: a rotation turns every ray of a tie wholly inside the copied set
+// by the same step, so the tie between a copy's own two lines is the source's tie unchanged - the value is
+// carried, not turned.
+#[test]
+fn an_internal_tie_keeps_the_angle_it_kept() {
+    let (mut p, si) = new_sketch();
+    let one = p.add_line_entity(si, 10.0, 0.0, 20.0, 0.0, Purpose::Real);
+    let two = p.add_line_entity(si, 30.0, 0.0, 38.660254, 5.0, Purpose::Real); // at 30 degrees off the first
+    let (a1, b1) = line_ends(&p, si, one);
+    let (a2, b2) = line_ends(&p, si, two);
+    p.sketches[si].constraints.push(Constraint::AngleLines { a: a1, b: b1, c: a2, d: b2, deg: 30.0, expr: String::new(), driven: false, off: 0.0, at: None });
+    p.solve_sketch(si);
+    let from = p.sketches[si].constraints.len();
+    p.array_circular(si, &[one, two], 0.0, 0.0, 3, 360.0);
+    let carried: Vec<f64> = p.sketches[si].constraints[from..]
+        .iter()
+        .filter_map(|c| match c {
+            Constraint::AngleLines { deg, .. } => Some(*deg),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(carried.iter().filter(|d| (**d - 30.0).abs() < 5e-3).count(), 2, "both copies carry the tie at the source's own 30 degrees; {:?}", carried);
+}
+
+// A TIE TO AN OUTSIDE LINE IS CARRIED AS THE OPENING THE LAY MAKES: one line of the tie turns with the
+// copy, the other stands, and the unsigned row that judges the clone cannot say which way the old opening
+// lay - both openings it might have come to are answered, and the one the laid-out copy makes is laid.
+// Here a 30-degree tie turned by 200 degrees comes to the opening of 170, not the 130 of the other way
+// round.
+#[test]
+fn a_tie_to_an_outside_line_is_carried_as_the_opening_the_lay_makes() {
+    let (mut p, si) = new_sketch();
+    let one = p.add_line_entity(si, 10.0, 0.0, 20.0, 0.0, Purpose::Real);
+    let outside = p.add_line_entity(si, 30.0, 0.0, 38.660254, 5.0, Purpose::Real); // stands, at 30 degrees
+    let (a1, b1) = line_ends(&p, si, one);
+    let (a2, b2) = line_ends(&p, si, outside);
+    p.sketches[si].constraints.push(Constraint::AngleLines { a: a1, b: b1, c: a2, d: b2, deg: 30.0, expr: String::new(), driven: false, off: 0.0, at: None });
+    p.solve_sketch(si);
+    let from = p.sketches[si].constraints.len();
+    p.array_circular(si, &[one], 0.0, 0.0, 2, 400.0); // one copy, turned by 200 degrees
+    let carried: Vec<f64> = p.sketches[si].constraints[from..]
+        .iter()
+        .filter_map(|c| match c {
+            Constraint::AngleLines { c: q, d, deg, .. } if *q == a2 && *d == b2 => Some(*deg),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(carried.len(), 1, "the tie to the outside line is carried onto the copy");
+    assert!((carried[0] - 170.0).abs() < 5e-3, "at the opening the lay makes, 170 degrees, not the 130 of the other way round; {}", carried[0]);
+}
+
+// AN ORIENTATION IS ABSOLUTE AND TURNS WHOLE: its row holds the direction of a line, a thing modulo a half
+// turn, so the carried value is the source's turned by the step - 30 becomes 120, 210, 300 - and is never
+// folded to an opening.
+#[test]
+fn an_orientation_is_carried_turned_whole() {
+    let (mut p, si) = new_sketch();
+    let line = p.add_line_entity(si, 10.0, 0.0, 18.660254, 5.0, Purpose::Real); // drawn at 30 degrees
+    let (a, b) = line_ends(&p, si, line);
+    p.sketches[si].constraints.push(Constraint::Orientation { a, b, deg: 30.0 });
+    p.solve_sketch(si);
+    let from = p.sketches[si].constraints.len();
+    p.array_circular(si, &[line], 0.0, 0.0, 4, 360.0);
+    let carried: Vec<f64> = p.sketches[si].constraints[from..]
+        .iter()
+        .filter_map(|c| match c {
+            Constraint::Orientation { deg, .. } => Some(*deg),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(carried.len(), 3, "every copy carries the orientation; {:?}", carried);
+    for want in [120.0, 210.0, 300.0] {
+        assert!(carried.iter().any(|d| (*d - want).abs() < 5e-3), "the orientation turned to {want} is missing; {:?}", carried);
+    }
 }

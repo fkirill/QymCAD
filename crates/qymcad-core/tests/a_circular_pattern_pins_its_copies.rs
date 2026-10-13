@@ -6,7 +6,7 @@
 //! a set of one circle has no turn of its own. The centre itself becomes a point the constraints name: a
 //! click that landed on geometry uses it, a click on empty sheet puts a point there.
 use qymcad_core::feature::Purpose;
-use qymcad_core::model::{Constraint, EntityKind, Id, PatternKind, Project};
+use qymcad_core::model::{constraint_point_ids, Constraint, EntityKind, Id, PatternKind, Project};
 
 fn new_sketch() -> (Project, usize) {
     let mut p = Project::default();
@@ -340,4 +340,58 @@ fn a_put_centre_and_its_pins_travel_through_the_file() {
     fully_constrained(&p, si);
     p.delete_pattern(si, 0);
     assert_eq!(points_at(&p, si, 0.0, 30.0), 0, "the record travels: the pattern still takes its centre away");
+}
+
+// THE QUICK EDIT'S PUT CENTRE DIES WITH ITS COPIES AND NOT BEFORE: the tool lays no record, and the centre
+// its copies pin about is held up by their pins - an unrelated delete sweeps no orphan through it - while
+// deleting the copies takes the pins and the centre with them.
+#[test]
+fn the_quick_edit_s_put_centre_dies_with_its_copies_and_not_before() {
+    let (mut p, si) = new_sketch();
+    let line = line_held_by_a_pin(&mut p, si);
+    let other = p.add_line_entity(si, -30.0, 40.0, -20.0, 40.0, Purpose::Real); // a free line, going
+    p.array_circular(si, &[line], 0.0, 30.0, 4, 360.0);
+    let centre = p.sketches[si].points.iter().find(|q| near((q.x, q.y), (0.0, 30.0))).unwrap().id;
+    p.delete_entities(si, &[other]);
+    assert_eq!(points_at(&p, si, 0.0, 30.0), 1, "an unrelated delete swept the quick edit's centre away as an orphan");
+    let named = p.sketches[si].constraints.iter().any(|c| matches!(c, Constraint::Angle { .. } | Constraint::Equal { .. }) && constraint_point_ids(c).contains(&centre));
+    assert!(named, "no pin names the centre after the unrelated delete");
+    assert_eq!(p.sketch_dof(si), (0, 0), "the copies keep their place with the free line gone");
+    let copies: Vec<Id> = p.sketches[si].entities.iter().filter(|e| e.id != line).map(|e| e.id).collect();
+    p.delete_entities(si, &copies);
+    assert_eq!(points_at(&p, si, 0.0, 30.0), 0, "the centre went with its copies");
+}
+
+// A PUT CENTRE SHARED BY TWO PATTERNS IS HELD BY THE ONES THAT STAND: the second pattern about the same
+// place finds the first's centre and records nothing, and deleting the first leaves the centre standing in
+// the second's pins; the last pattern to go takes it with it.
+#[test]
+fn a_put_centre_shared_by_two_patterns_is_held_by_the_patterns_that_stand() {
+    let (mut p, si) = new_sketch();
+    let line = line_held_by_a_pin(&mut p, si);
+    let _ = p.add_pattern(si, &[line], PatternKind::Circular { cx: 0.0, cy: 30.0, count: 4, total_deg: 360.0 });
+    let _ = p.add_pattern(si, &[line], PatternKind::Circular { cx: 0.0, cy: 30.0, count: 4, total_deg: 360.0 });
+    assert_eq!(p.sketches[si].patterns[1].centre, None, "a centre another pattern put is found, not recorded again");
+    let centre = p.sketches[si].patterns[0].centre.unwrap();
+    p.delete_pattern(si, 0);
+    assert_eq!(points_at(&p, si, 0.0, 30.0), 1, "the centre stands: the second pattern's copies pin about it");
+    let named = p.sketches[si].constraints.iter().any(|c| matches!(c, Constraint::Angle { .. } | Constraint::Equal { .. }) && constraint_point_ids(c).contains(&centre));
+    assert!(named, "the standing pattern's own pins still name the centre");
+    assert_eq!(p.sketch_dof(si), (0, 0), "the standing pattern's copies keep their place");
+    p.delete_pattern(si, 0);
+    assert_eq!(points_at(&p, si, 0.0, 30.0), 0, "the centre went with the last pattern that held it");
+}
+
+// A CIRCULAR PATTERN OF ONE LAYS NO CENTRE: it copies nothing, and nothing stands to pin - the click that
+// meant a centre belongs to copies that are not there. Neither door puts a point.
+#[test]
+fn a_circular_pattern_of_one_lays_no_centre() {
+    let (mut p, si) = new_sketch();
+    let line = line_held_by_a_pin(&mut p, si);
+    let before = p.sketches[si].points.len();
+    p.array_circular(si, &[line], 0.0, 30.0, 1, 360.0);
+    assert_eq!(p.sketches[si].points.len(), before, "the quick edit of one copy puts no centre");
+    let _ = p.add_pattern(si, &[line], PatternKind::Circular { cx: 0.0, cy: 30.0, count: 1, total_deg: 360.0 });
+    assert_eq!(p.sketches[si].patterns[0].centre, None, "the bar's pattern of one records no centre");
+    assert_eq!(p.sketches[si].points.len(), before, "and puts no point");
 }

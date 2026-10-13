@@ -1105,11 +1105,11 @@ pub struct SketchPattern {
 /// What laying a pattern's instances answered: the entities laid, and the centre point the circular kind
 /// OWNS - freshly put on empty sheet, or found being the very point this pattern put before, for a
 /// re-layout finds what the first apply laid. `None` when the centre landed on existing geometry, which is
-/// not the pattern's to take away. The quick edit tool lays no pattern record and its put centre stays
-/// like a drawn point.
-pub struct LaidPattern {
-    pub instances: Vec<Id>,
-    pub centre: Option<Id>,
+/// not the pattern's to take away. The quick edit tool lays no pattern record: its put centre is held up by
+/// the pins of the copies it laid and goes when they go.
+struct LaidPattern {
+    instances: Vec<Id>,
+    centre: Option<Id>,
 }
 
 /// Source of a projection into a sketch: a reference to body geometry by persistent name rather than by
@@ -2210,8 +2210,12 @@ impl Project {
 
     /// Circular array: `count` copies around (cx, cy) spanning `total_deg` in total. Each copy carries the
     /// constraints of what it copies when they hold of it as laid out, and the edit ends at the solver.
+    /// A count below two copies nothing and puts no centre: nothing stands to pin.
     pub fn array_circular(&mut self, si: usize, eids: &[Id], cx: f64, cy: f64, count: u32, total_deg: f64) {
         let count = count.max(1);
+        if count < 2 {
+            return;
+        }
         // A full circle (360 degrees) spreads `count` copies around it; a sector holds `count` copies within it.
         let step = if (total_deg - 360.0).abs() < 1e-6 { total_deg / count as f64 } else { total_deg / count.max(2) as f64 };
         let centre = match self.pattern_centre_point(si, cx, cy) {
@@ -2257,21 +2261,25 @@ impl Project {
             PatternKind::Circular { cx, cy, count, total_deg } => {
                 let count = count.max(1);
                 let step = if (total_deg - 360.0).abs() < 1e-6 { total_deg / count as f64 } else { total_deg / count.max(2) as f64 };
-                if let Some(c) = self.pattern_centre_point(si, cx, cy) {
-                    centre = (c.put || owned == Some(c.id)).then_some(c.id);
-                    let from = self.sketches.get(si).map_or(0, |s| s.constraints.len());
-                    for k in 1..count {
-                        let ang = (step * k as f64).to_radians();
-                        let (s_, c_) = (ang.sin(), ang.cos());
-                        out.extend(self.dup_entities_unbuilt(
-                            si,
-                            source,
-                            move |x, y| {
-                                let (vx, vy) = (x - cx, y - cy);
-                                (cx + vx * c_ - vy * s_, cy + vx * s_ + vy * c_)
-                            },
-                            sketch::ConstraintCarry::Rotational { centre: c.id, deg: step * k as f64, from },
-                        ));
+                // A count below two lays no copy and no centre: nothing stands to pin, and the centre
+                // click's point would be an orphan no record and no pin owns.
+                if count >= 2 {
+                    if let Some(c) = self.pattern_centre_point(si, cx, cy) {
+                        centre = (c.put || owned == Some(c.id)).then_some(c.id);
+                        let from = self.sketches.get(si).map_or(0, |s| s.constraints.len());
+                        for k in 1..count {
+                            let ang = (step * k as f64).to_radians();
+                            let (s_, c_) = (ang.sin(), ang.cos());
+                            out.extend(self.dup_entities_unbuilt(
+                                si,
+                                source,
+                                move |x, y| {
+                                    let (vx, vy) = (x - cx, y - cy);
+                                    (cx + vx * c_ - vy * s_, cy + vx * s_ + vy * c_)
+                                },
+                                sketch::ConstraintCarry::Rotational { centre: c.id, deg: step * k as f64, from },
+                            ));
+                        }
                     }
                 }
             }
