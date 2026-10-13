@@ -1413,8 +1413,8 @@ mod tests {
 
         // --- A RING LAID BY A CIRCULAR PATTERN: the tool made for repeating constrained geometry. Two chords
         // joined by a coincidence are patterned about the centre; every copy carries the coincidence between
-        // its own two chords, a junction of a copy dragged takes both its chords with it, and the ring
-        // extrudes as one closed contour. ---
+        // its own two chords and is pinned about the centre - it adds the freedom of its shape alone and
+        // none of its placement - and the ring extrudes as one closed contour. ---
         app.exit_context();
         let ring = app.project.add_part("Ring");
         app.enter_component(ring);
@@ -1440,10 +1440,10 @@ mod tests {
             }
         }
         check_all(&mut app, "the ring's chords were joined", &mut problems);
-        let source_junction = app.project.sketches.get(si11).and_then(|s| {
-            let system = s.system_ids();
-            s.points.iter().filter(|p| !system.contains(&p.id)).find(|p| s.points.iter().filter(|q| (q.x - p.x).hypot(q.y - p.y) < 1e-6).count() >= 2).map(|p| (p.x, p.y))
-        });
+        // THE FREEDOM THE RING STARTS WITH: the joined chords float free, and the pattern that pins its
+        // copies must not add a freedom of its own - what the ring holds after the apply is what the
+        // source held before it, and the three of each copy's shape.
+        let dof_of_the_source = app.project.sketch_dof(si11);
         // the pair patterned three times about the origin - the bar's own numbers - closing the ring
         {
             let mut hand = Hand::new(&mut app);
@@ -1465,40 +1465,29 @@ mod tests {
         if joined != Some((6, 3)) {
             problems.push(format!("[ring] the patterned ring holds {joined:?}, six chords joined by three coincidences were expected; status: {}", app.status));
         }
-        // A JUNCTION OF A COPY DRAGGED ALONG: both its chords follow the coincidence the copy carries. The
-        // copy's junction is a pair of ends standing in one place away from the source's own, and what the
-        // drag owes is that the pair travels as one - the copy's ends held together by the constraint it
-        // carries, not left one behind.
-        let copy_junction = app.project.sketches.get(si11).and_then(|s| {
-            let system = s.system_ids();
-            s.points
-                .iter()
-                .filter(|p| !system.contains(&p.id))
-                .find(|p| {
-                    let far = source_junction.is_none_or(|j| (p.x - j.0).hypot(p.y - j.1) > 1.0);
-                    far && s.points.iter().filter(|q| (q.x - p.x).hypot(q.y - p.y) < 1e-6).count() >= 2
-                })
-                .map(|p| (p.x, p.y))
+        // THE COPIES ARE PINNED, NOT MERELY DRAWN: beside each carried coincidence a copy holds an angle at
+        // the centre for the step, a turn tie and an equal length from the centre, and the ring holds no
+        // freedom the source did not have - so a sketch fully constrained before the pattern would come
+        // out fully constrained after it.
+        let pins = app.project.sketches.get(si11).map(|s| {
+            use qymcad_core::model::Constraint;
+            (
+                s.constraints.iter().filter(|c| matches!(c, Constraint::Coincident { .. })).count(),
+                s.constraints.iter().filter(|c| matches!(c, Constraint::Angle { .. })).count(),
+                s.constraints.iter().filter(|c| matches!(c, Constraint::AngleLines { .. })).count(),
+                s.constraints.iter().filter(|c| matches!(c, Constraint::Equal { .. })).count(),
+            )
         });
-        if let Some(at) = copy_junction {
-            let ids: Vec<u64> = app.project.sketches[si11].points.iter().filter(|q| (q.x - at.0).hypot(q.y - at.1) < 1e-3).map(|q| q.id).collect();
-            {
-                let mut hand = Hand::new(&mut app);
-                hand.drag2d(at, (at.0 + 1.0, at.1 + 1.0));
-            }
-            let after = app.project.sketches.get(si11).map(|s| {
-                let moved: Vec<(f64, f64)> = ids.iter().filter_map(|id| s.points.iter().find(|q| q.id == *id)).map(|q| (q.x, q.y)).collect();
-                let together = moved.len() == 2 && (moved[0].0 - moved[1].0).hypot(moved[0].1 - moved[1].1) < 1e-3;
-                let gone = moved.iter().all(|m| (m.0 - at.0).hypot(m.1 - at.1) > 0.5);
-                (together, gone)
-            });
-            if after != Some((true, true)) {
-                problems.push(format!("[ring] dragging the junction of a copy left the ends {after:?}, together and away from where they stood was expected; status: {}", app.status));
-            }
-        } else {
-            problems.push("[ring] no junction of a copy stands apart from the source's after the pattern".to_string());
+        if pins != Some((3, 2, 2, 2)) {
+            problems.push(format!("[ring] the patterned ring holds {pins:?} - three carried ties and, per copy, an angle, a turn tie and an equal length were expected; status: {}", app.status));
         }
-        check_all(&mut app, "a junction of the ring was dragged", &mut problems);
+        let dof_of_the_ring = app.project.sketch_dof(si11);
+        // each copy adds the freedom of its shape alone - the three of two chords joined at one point -
+        // and none of its placement: the pins hold that. A copy laid bare would add six.
+        if dof_of_the_ring != (dof_of_the_source.0 + 3 * 2, dof_of_the_source.1) {
+            problems.push(format!("[ring] the patterned ring holds {dof_of_the_ring:?} where its source held {dof_of_the_source:?} - the two copies were to add the three of their shape each and no placement; status: {}", app.status));
+        }
+        check_all(&mut app, "the ring was patterned and pinned", &mut problems);
         app.finish_sketch_edit();
         app.chosen.sel = super::super::Sel::Sketch(si11);
         {
