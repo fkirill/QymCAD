@@ -6,6 +6,30 @@
 use super::*;
 use super::tess::*; // 2D sketch geometry: profiles, tessellation, region analysis.
 
+/// WHAT A DUPLICATION CARRIES ONTO ITS COPY.
+pub(super) enum ConstraintCarry {
+    /// Nothing: the copy is bare geometry (the mirror, the linear pattern).
+    None,
+    /// The constraints internal to the copied set, re-pointed at the copy's points: the shape keeps itself,
+    /// the anchor and the links outside are not carried (the Copy tool, the clipboard).
+    Internal,
+    /// The circular pattern's rule: a constraint that touches the copied set is cloned onto the copy when it
+    /// holds of the copy as laid out - a reference inside the set remapped to the copy's corresponding point,
+    /// a reference outside kept as it is, an angular value turned by the copy's `deg` - and a clone that does
+    /// not hold, or that the solver calls implied, is not laid.
+    Rotational { deg: f64 },
+}
+
+/// Turn the angular values a constraint holds by `deg`: a rotation carries an orientation and an angle with
+/// it, as `rotate_entities` turns the turn a rectangle holds itself by. A length, a radius and an arc length
+/// are preserved by a rotation about any centre and keep their value.
+fn turn_angular_values(c: &mut Constraint, deg: f64) {
+    match c {
+        Constraint::Orientation { deg: held, .. } | Constraint::Angle { deg: held, .. } | Constraint::AngleLines { deg: held, .. } => *held += deg,
+        _ => {}
+    }
+}
+
 /// A TEXT OBJECT IN A SKETCH: where it sits, how tall it stands, how it is turned, what it says and the
 /// outlines it was traced into.
 ///
@@ -1588,18 +1612,16 @@ impl Project {
             .cloned()
             .collect()
     }
-    /// Duplicate entities with point transform `f`. `with_constraints` selects whether the constraints and
-    /// dimensions internal to the set are carried over (horizontals, verticals, edge dimensions and so on, but
-    /// no `Fixed` and no references to the axes). Returns the new ids.
-    pub(super) fn dup_entities<F: Fn(f64, f64) -> (f64, f64)>(&mut self, si: usize, eids: &[Id], f: F, with_constraints: bool) -> Vec<Id> {
-        let new_ids = self.dup_entities_unbuilt(si, eids, f, with_constraints);
+    /// Duplicate entities with point transform `f`, carrying `carry` onto the copy. Returns the new ids.
+    pub(super) fn dup_entities<F: Fn(f64, f64) -> (f64, f64)>(&mut self, si: usize, eids: &[Id], f: F, carry: ConstraintCarry) -> Vec<Id> {
+        let new_ids = self.dup_entities_unbuilt(si, eids, f, carry);
         self.regen_sketch(si);
         new_ids
     }
     /// `dup_entities` without the loops made again after it: for a pattern, which lays every copy and makes the loops
     /// once. Made again after each copy, a pattern of 200 lines across 200 others made a growing grid 199 times - 29 s,
     /// the last grid of 40 000 cells.
-    pub(super) fn dup_entities_unbuilt<F: Fn(f64, f64) -> (f64, f64)>(&mut self, si: usize, eids: &[Id], f: F, with_constraints: bool) -> Vec<Id> {
+    pub(super) fn dup_entities_unbuilt<F: Fn(f64, f64) -> (f64, f64)>(&mut self, si: usize, eids: &[Id], f: F, carry: ConstraintCarry) -> Vec<Id> {
         let pids = self.entity_point_ids(si, eids);
         let coords: Vec<(Id, f64, f64)> = {
             let Some(s) = self.sketches.get(si) else { return Vec::new() };
@@ -1634,14 +1656,59 @@ impl Project {
             self.sketches[si].entities.push(SketchEntity { id, kind: nk, construction: e.construction });
             new_ids.push(id);
         }
-        if with_constraints {
-            // The internal constraints of the set are re-pointed at the new points, so the copy keeps its
-            // shape but not its anchor or its links to the axes.
-            let inside: std::collections::HashSet<Id> = map.keys().copied().collect();
-            let cons: Vec<Constraint> = self.internal_constraints(si, &inside).iter().map(|c| remap_constraint_via(c, &map)).collect();
-            self.sketches[si].constraints.extend(cons);
+        match carry {
+            ConstraintCarry::None => {}
+            ConstraintCarry::Internal => {
+                // The internal constraints of the set are re-pointed at the new points, so the copy keeps its
+                // shape but not its anchor or its links to the axes.
+                let inside: std::collections::HashSet<Id> = map.keys().copied().collect();
+                let cons: Vec<Constraint> = self.internal_constraints(si, &inside).iter().map(|c| remap_constraint_via(c, &map)).collect();
+                self.sketches[si].constraints.extend(cons);
+            }
+            ConstraintCarry::Rotational { deg } => self.carry_rotational(si, &map, deg),
         }
         new_ids
+    }
+    /// The circular pattern's carry (see [`ConstraintCarry::Rotational`]): for every constraint that touches
+    /// the copied set - `Fixed` aside, a pin being placement and not design intent - the candidate the
+    /// rotation leaves behind is built from the copy's own map, checked against the copy as laid out, and
+    /// laid only when it both holds and constrains something the sketch does not already know. A candidate
+    /// that fails is dropped, not bent: no copy is dragged onto a constraint it does not satisfy.
+    pub(super) fn carry_rotational(&mut self, si: usize, map: &std::collections::HashMap<Id, Id>, deg: f64) {
+        let inside: std::collections::HashSet<Id> = map.keys().copied().collect();
+        let cons: Vec<Constraint> = match self.sketches.get(si) {
+            Some(s) => s.constraints.iter().filter(|c| !matches!(c, Constraint::Fixed { .. }) && constraint_point_ids(c).iter().any(|p| inside.contains(p))).cloned().collect(),
+            None => return,
+        };
+        for c in cons {
+            let mut cand = remap_constraint_via(&c, map);
+            turn_angular_values(&mut cand, deg);
+            if !self.constraint_holds_of_the_laid_copy(si, &cand) {
+                continue;
+            }
+            if cand.is_driven() {
+                // A reference dimension constrains nothing, so the independence gate cannot judge it; it is
+                // laid when it holds, as the Copy tool lays it.
+                self.sketches[si].constraints.push(cand);
+            } else {
+                self.add_constraint_if_independent(si, cand);
+            }
+        }
+    }
+    /// Whether constraint `c` holds of the sketch as laid out: the solver's own residual for it alone, at the
+    /// positions the copy was placed at, within a tolerance per kind. Lengths sit at the landing tolerance of
+    /// `anchor_cut_point`; an angle, whose residual is in radians, at the same number of them; the rows of
+    /// the line relations - a cross or a dot of two directions - scale with the lengths they span, and sit at
+    /// the tolerance over that scale.
+    fn constraint_holds_of_the_laid_copy(&self, si: usize, c: &Constraint) -> bool {
+        const TOL: f64 = 5e-3; // mm, the tolerance a trim anchor lands a point by
+        let Some(s) = self.sketches.get(si) else { return false };
+        let r = crate::solver::residual_per_constraint(&s.points, &self.entity_radii(si), std::slice::from_ref(c))[0];
+        if matches!(c, Constraint::Parallel { .. } | Constraint::Perpendicular { .. } | Constraint::Symmetric { .. }) {
+            let span = constraint_point_ids(c).iter().filter_map(|p| s.points.iter().find(|q| q.id == *p)).map(|q| q.x.abs().max(q.y.abs())).fold(1.0_f64, f64::max).max(1.0);
+            return r < TOL * span * span;
+        }
+        r < TOL
     }
     /// Capture the selected geometry of sketch `si` into the clipboard, for pasting into this sketch or
     /// another one. `eids` are the selected entities; the snapshot holds them and all their points (centres,
@@ -1705,6 +1772,7 @@ impl Project {
             s.patterns.push(SketchPattern { id, source: source.to_vec(), kind, instances });
         }
         self.regen_sketch(si);
+        self.solve_sketch(si); // the edit ends at the solver: what the copies carry is enforced from here on
         id
     }
     /// Change the parameters of pattern `pi`: remove the old instances and recreate them with the new ones.
@@ -1720,6 +1788,7 @@ impl Project {
             p.instances = instances;
         }
         self.regen_sketch(si);
+        self.solve_sketch(si); // the edit ends at the solver: what the copies carry is enforced from here on
     }
     /// Delete pattern `pi` together with its copies; the source stays.
     pub fn delete_pattern(&mut self, si: usize, pi: usize) {
