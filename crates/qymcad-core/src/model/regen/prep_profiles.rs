@@ -40,10 +40,28 @@ impl Project {
         }
     }
 
+    /// A stored profile id that resolves to no region of the sketch is a loss the fallback papers over:
+    /// the node carries the count as a warning, as a partly lost edge set does (`EdgesDropped`). The
+    /// empty selection is the first-contour convention, not a loss, and stays silent. The map is rewritten
+    /// on every rebuild of the node, so the warning clears the moment the selection resolves again.
+    fn warn_profiles_dropped(&mut self, node: Id, stored: &[Id], sketch: Id, fill: &[Id]) {
+        self.regen_warnings.remove(&node);
+        let asked = stored.iter().chain(fill).filter(|&&p| p != 0).count();
+        if asked == 0 {
+            return;
+        }
+        let live: std::collections::HashSet<Id> = self.profile_faces(sketch, stored, fill).into_iter().map(|(c, _)| c).collect();
+        let dropped = stored.iter().chain(fill).filter(|&&p| p != 0 && !live.contains(&p)).count();
+        if dropped > 0 {
+            self.regen_warnings.insert(node, crate::errors::CoreError::ProfilesDropped { asked, dropped });
+        }
+    }
+
     /// Extrude: one branch of the timeline rebuild. Returns whether the node's error record may
     /// be cleared (see `apply_regen`).
     pub(crate) fn prep_extrude(&mut self, p: &mut Pass, prof: Profile, span: ExtrudeSpan, body: Id) -> crate::feature::KernelJob {
         let (Profile { sketch, profiles }, ExtrudeSpan { height, down, reach, fill }) = (prof, span);
+        self.warn_profiles_dropped(p.node, profiles, sketch, fill);
         let mut pl = self.sketch_place(sketch);
         // Parametric dimension expressions, where present, override the stored numbers.
         let height = p.dim("height", height);
@@ -78,6 +96,7 @@ impl Project {
     /// be cleared (see `apply_regen`).
     pub(crate) fn prep_revolve(&mut self, p: &mut Pass, prof: Profile, ax: RevolveAxis, angle: f64, reach: crate::feature::Reach, t: BodyOp) -> crate::feature::KernelJob {
         let (sketch, profiles) = (prof.sketch, prof.profiles);
+        self.warn_profiles_dropped(p.node, profiles, sketch, &[]);
         let axis = ax.axis;
         let (src, op, body) = (t.src, t.op, t.body);
         let pl = self.sketch_place(sketch);
@@ -137,6 +156,7 @@ impl Project {
     /// be cleared (see `apply_regen`).
     pub(crate) fn prep_sweep(&mut self, p: &mut Pass, prof: Profile, path_sketch: Id, path: Id, bo: BodyOp) -> crate::feature::KernelJob {
         let (Profile { sketch, profiles }, BodyOp { src, op, body }) = (prof, bo);
+        self.warn_profiles_dropped(p.node, profiles, sketch, &[]);
         // The profile and the path are different sketches, each with its own placement (the frame
         // of its plane).
         let prof_pl = self.sketch_place(sketch);
@@ -161,6 +181,7 @@ impl Project {
     pub(crate) fn prep_combine(&mut self, p: &mut Pass, prof: Profile, span: CombineSpan, t: BodyOp) -> crate::feature::KernelJob {
         let CombineSpan { height, down, extent, fill } = span;
         let (sketch, profiles) = (prof.sketch, prof.profiles);
+        self.warn_profiles_dropped(p.node, profiles, sketch, fill);
         let (src, op, body) = (t.src, t.op, t.body);
         let pl = self.sketch_place(sketch);
         let h0 = p.dim("height", height).abs();

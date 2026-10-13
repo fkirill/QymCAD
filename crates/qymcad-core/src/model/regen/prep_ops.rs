@@ -506,6 +506,14 @@ impl Project {
     /// be cleared (see `apply_regen`).
     pub(crate) fn prep_loft(&mut self, p: &mut Pass, sketches: Vec<Id>, contours: Vec<Id>, ruled: bool, surface: bool, bo: BodyOp) -> crate::feature::KernelJob {
         let BodyOp { src, op, body } = bo;
+        // A section contour that no longer resolves is a lost profile beside the refusal the loft gives:
+        // one contour per section is all a section reference can hold, so no cover can heal it here.
+        self.regen_warnings.remove(&p.node);
+        let asked = contours.iter().filter(|&&c| c != 0).count();
+        let dropped = sketches.iter().zip(contours.iter()).filter(|&(s, &c)| c != 0 && self.loft_section_contour(*s, c).is_none()).count();
+        if dropped > 0 {
+            self.regen_warnings.insert(p.node, crate::errors::CoreError::ProfilesDropped { asked, dropped });
+        }
         // Each section sits on its own plane (the placement is encoded in `places`), and two or more
         // sections produce a body. A zero `src` makes a separate body; otherwise the lofted solid is
         // combined with body `src` as a lofted cut or boss.

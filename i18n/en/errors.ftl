@@ -173,6 +173,7 @@ error-thread-depth-too-deep = Thread depth { $depth } mm is at or beyond the rad
 error-thread-not-its-size = A thread of Ø{ $nominal } does not fit a face of Ø{ $face } — choose the size of the face, or the face of the size
 warn-edges-dropped = { $dropped } of the { $asked } edges could not be taken and are left sharp; the rest are done — double-click the node to pick other edges or another size
 warn-import-kept-as-it-came = The body brought in from the file did not pass the checks and could not be repaired, so it is kept exactly as the file holds it; an operation on it may refuse — open the file in the program that made it and export it again, or check its tolerance
+warn-profiles-dropped = { $dropped } of the { $asked } contours no longer exist in the sketch; the rest are used — double-click the node to pick a live contour
 error-thread-removed-nothing = The thread removed nothing ({ $before } -> { $after } mm³) — check the chosen face, pitch and length
 error-thread-failed = The thread did not build (check pitch, length and diameter)
 error-auger-rim-not-found = The shaft rim (a circular edge) was not found

@@ -279,6 +279,10 @@ pub enum CoreError {
     EdgesDropped { asked: usize, dropped: usize },
     /// A body brought in from a file failed the checks of the door and could not be repaired: it is kept as it came.
     ImportKeptAsItCame,
+    /// A WARNING, not a failure: `dropped` of the `asked` profile contours of a feature's selection no
+    /// longer resolve to a region of the sketch. The rebuild keeps today's fallback (the first closed
+    /// region where the kind has one); the node carries the count, as a partly lost edge set does.
+    ProfilesDropped { asked: usize, dropped: usize },
     /// A shell cannot be built on this body: offsetting the faces fails inside the kernel, which raises an
     /// internal error. This is neither the user's fault nor a lost reference but a limit of the algorithm.
     ShellNotBuiltHere,
@@ -470,6 +474,7 @@ impl CoreError {
             ThreadNotItsSize { .. } => "error-thread-not-its-size".into(),
             EdgesDropped { .. } => "warn-edges-dropped".into(),
             ImportKeptAsItCame => "warn-import-kept-as-it-came".into(),
+            ProfilesDropped { .. } => "warn-profiles-dropped".into(),
             PushFaceOnSheet => "error-push-face-on-sheet".into(),
             NeedsSolidNotSheet => "error-needs-solid-not-sheet".into(),
             DraftFailed { .. } => "error-draft-failed".into(),
@@ -593,6 +598,7 @@ impl std::fmt::Display for CoreError {
             ThreadNotItsSize { face, nominal } => write!(f, "a thread of {nominal:.2} does not fit a face of {face:.2}"),
             EdgesDropped { asked, dropped } => write!(f, "{dropped} of the {asked} edges could not be taken"),
             ImportKeptAsItCame => write!(f, "the body brought in failed the checks and is kept as it came"),
+            ProfilesDropped { asked, dropped } => write!(f, "{dropped} of the {asked} profile contours could not be found"),
             PushFaceOnSheet => write!(f, "push face on a sheet"),
             NeedsSolidNotSheet => write!(f, "solid tool on a sheet"),
             DraftFailed { angle } => write!(f, "draft {angle:.1} failed"),
