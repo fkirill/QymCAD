@@ -185,19 +185,25 @@ pub fn tools() -> Vec<Tool> {
         Tool {
             name: "a circular pattern of 8",
             work: |p, t| {
+                // the source carries its level, as a drawn line does: the copies turned by a whole half turn
+                // lie level again and the pattern carries the level onto them
+                let (a, b) = ends(p, t.short);
+                lay(p, Constraint::Horizontal { a, b });
                 let c = at(p, t.circle);
                 let _ = p.add_pattern(0, &[t.short], PatternKind::Circular { cx: c.x, cy: c.y, count: 8, total_deg: 360.0 });
             },
-            effect: Effect::Adds,
+            effect: Effect::Constrains,
         },
         Tool { name: "a linear array of 10", work: |p, t| p.array_linear(0, &[t.one], 3.0, 3.0, 10), effect: Effect::Adds },
         Tool {
             name: "a circular array of 8",
             work: |p, t| {
+                let (a, b) = ends(p, t.short);
+                lay(p, Constraint::Horizontal { a, b });
                 let c = at(p, t.circle);
                 p.array_circular(0, &[t.short], c.x, c.y, 8, 360.0)
             },
-            effect: Effect::Adds,
+            effect: Effect::Constrains,
         },
         // the edits of a selection
         Tool { name: "50 lines mirrored", work: |p, _| p.mirror_entities(0, &lines(p, 50), 0.0, -100.0, 1.0, -100.0), effect: Effect::Adds },
