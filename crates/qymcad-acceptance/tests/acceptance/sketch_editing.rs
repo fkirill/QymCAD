@@ -527,9 +527,10 @@ fn pattern_the_chords(s: &mut Session, count: &str) {
 }
 
 probe! {
-    /// A CIRCULAR PATTERN CARRIES THE CONSTRAINT OF WHAT IT COPIES: two chords joined by a coincidence are
-    /// patterned about the centre as one selection, and every copy carries the coincidence between its own
-    /// two chords - the ring closes by constraint, and moving the end of one chord of a copy takes the other
+    /// A CIRCULAR PATTERN CARRIES THE CONSTRAINT OF WHAT IT COPIES AND PINS WHAT IT LAYS: two chords joined
+    /// by a coincidence are patterned about the centre as one selection, and every copy carries the
+    /// coincidence between its own two chords and is pinned about the centre - the ring closes by
+    /// constraint and stands where it was laid, and moving the end of one chord of a copy takes the other
     /// with it.
     fn a_circular_pattern_of_constrained_chords_keeps_the_copies_joined() {
         let mut s = empty_sketch();
@@ -537,8 +538,9 @@ probe! {
         pattern_the_chords(&mut s, "6");
         assert!(counts(&mut s).0 == 12, "the two chords and their five copies: {:?}", counts(&mut s));
         let sk = s.document().sketches[0].clone();
-        assert!(sk.constraints == 6, "the source's tie and one for every copy: {} constraints stand", sk.constraints);
-        assert!(sk.constraint_kinds.iter().all(|k| k == "Coincident"), "every carried constraint is a coincidence: {:?}", sk.constraint_kinds);
+        assert!(sk.constraints == 21, "the source's tie, and per copy a carried tie and the three pins about the centre: {} constraints stand", sk.constraints);
+        assert!(sk.constraint_kinds.iter().filter(|k| *k == "Coincident").count() == 6, "the source's tie and one for every copy: {:?}", sk.constraint_kinds);
+        assert!(sk.constraint_kinds.iter().all(|k| matches!(k.as_str(), "Coincident" | "Angle" | "AngleLines" | "Equal")), "the carried ties and the pins and nothing else: {:?}", sk.constraint_kinds);
         // THE END OF ONE CHORD OF THE FIRST COPY DRAGGED: the other chord follows the coincidence it carries.
         // The first copy stands a sixth of the way round from the source, its junction where the source's
         // junction came to when it was turned by 60 degrees.
