@@ -119,13 +119,21 @@ pub enum FaceEnd {
     Stop,
 }
 
+/// THE TWO WORDS an end picks between: the one of the start face and the one of the stop face. Named
+/// fields, for the same reason as every travelling group: two neighbouring strings would swap and still
+/// compile.
+pub struct EndWords {
+    pub start: &'static str,
+    pub stop: &'static str,
+}
+
 impl FaceEnd {
     /// The word of this end: one of two whole catalogue keys (or plain words for `Display`), so that a
     /// refusal names a complete key rather than a base a format string finishes.
-    pub fn words(self, start: &'static str, stop: &'static str) -> &'static str {
+    pub fn words(self, w: EndWords) -> &'static str {
         match self {
-            FaceEnd::Start => start,
-            FaceEnd::Stop => stop,
+            FaceEnd::Start => w.start,
+            FaceEnd::Stop => w.stop,
         }
     }
 }
@@ -137,6 +145,15 @@ impl FaceEnd {
 pub struct FaceRef {
     pub body: Id,
     pub face: crate::refs::Ref,
+}
+
+/// A FACE TAKEN BY A PICK, as the command holds it between the click and the apply: the body it lives on
+/// and the whole key - the persistent id plus the fingerprint of the moment. Named fields, for a pair
+/// `(body, key)` swaps and still compiles.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReachedFace {
+    pub body: Id,
+    pub key: crate::feature::FaceKey,
 }
 
 /// WHICH WAY THE WALL OF A SHELL GOES from the face it is measured on.

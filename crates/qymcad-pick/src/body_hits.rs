@@ -503,7 +503,7 @@ pub fn pick_cyl_face_axis_at(pn: &Painting, rect: Rect, screen: Pos2) -> Option<
 /// own component that stands at or above the node being edited - a face of another component is not
 /// offered, and neither is a face the feature's input could not legally read. `None` means the cursor is
 /// over nothing the tool can take, and the click is left to say so.
-pub fn pick_face_parallel_at(pn: &Painting, rect: Rect, screen: Pos2) -> Option<(qymcad_core::model::Id, qymcad_core::feature::FaceKey)> {
+pub fn pick_face_parallel_at(pn: &Painting, rect: Rect, screen: Pos2) -> Option<qymcad_core::feature::ReachedFace> {
     use qymcad_core::feature::FaceKey;
     // the sketch plane gives the direction parallelism is measured against; a command without a sketch
     // takes no face
@@ -550,7 +550,13 @@ pub fn pick_face_parallel_at(pn: &Painting, rect: Rect, screen: Pos2) -> Option<
     let consumed = consumed_bodies(pn.project);
     let edit_hide = edit_hidden_bodies(pn.cmd, pn.project);
     let edit_src = if !edit_hide.is_empty() { edit_src_body(pn.cmd, pn.project) } else { None };
-    let mut face_best: Option<(f64, qymcad_core::model::Id, FaceKey)> = None;
+    // the nearest face that can be taken, with the depth it stands at - named, for a bare triple
+    // counts its commas to no one
+    struct BestFace {
+        depth: f64,
+        face: qymcad_core::feature::ReachedFace,
+    }
+    let mut best: Option<BestFace> = None;
     for (mi, mesh) in pn.project.bodies.iter().map(|b| &b.mesh).enumerate() {
         if !body_shown(pn.body_view(), mi) {
             continue;
@@ -572,19 +578,19 @@ pub fn pick_face_parallel_at(pn: &Painting, rect: Rect, screen: Pos2) -> Option<
             let (pc, dc) = scr.at(wc);
             if point_in_tri(screen, pa, pb, pc) {
                 let depth = tri_depth_at(screen, pa, da, pb, db, pc, dc);
-                if face_best.as_ref().is_none_or(|(bd, _, _)| depth < *bd) {
+                if best.as_ref().is_none_or(|hit| depth < hit.depth) {
                     if let (Some(b), Some(fi)) = (bid, pn.project.bodies.get(mi).and_then(|bs| bs.faces.iter().position(|f| f.triangles.contains(&(ti as u32))))) {
                         let face = &pn.project.bodies[mi].faces[fi];
                         let key = FaceKey { index: fi as u32, centroid: [face.centroid.x, face.centroid.y, face.centroid.z], normal: face.normal, id: face.id };
                         if taken(b, &key) {
-                            face_best = Some((depth, b, key));
+                            best = Some(BestFace { depth, face: qymcad_core::feature::ReachedFace { body: b, key } });
                         }
                     }
                 }
             }
         }
     }
-    face_best.map(|(_, b, k)| (b, k))
+    best.map(|hit| hit.face)
 }
 
 /// A CORNER OR AN EDGE UNDER THE CURSOR, as the selection takes it with nothing in hand: a corner within the point

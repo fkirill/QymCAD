@@ -234,7 +234,7 @@ impl Project {
     /// [`crate::feature::REACHED_FACE_PARALLEL_TOL_DEG`]; anything else is a refusal naming the face
     /// (`end` says which of the two it is).
     pub(crate) fn reached_face_place(&self, fr: &crate::feature::FaceRef, end: crate::feature::FaceEnd, pl: &[f64; 12]) -> Result<f64, crate::errors::CoreError> {
-        let what = end.words("ref-what-start-face", "ref-what-stop-face");
+        let what = end.words(crate::feature::EndWords { start: "ref-what-start-face", stop: "ref-what-stop-face" });
         let cand = self.resolve_face_ref(fr.body, &fr.face, what).map_err(|e| match e {
             crate::refs::RefError::Lost { was, .. } => crate::errors::CoreError::ReachedFaceLost { end, was },
             crate::refs::RefError::Ambiguous { .. } => crate::errors::CoreError::ReachedFaceLost { end, was: crate::refs::Fingerprint::default() },

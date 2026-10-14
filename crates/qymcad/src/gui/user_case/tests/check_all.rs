@@ -1,7 +1,7 @@
 use super::*;
 
 /// THE SINGLE "EVERYTHING ADDS UP" CHECK - run after every action rather than as a separate test.
-pub(super) fn check_all(app: &mut App, step: &str, problems: &mut Vec<String>) {
+pub(in crate::gui::user_case) fn check_all(app: &mut App, step: &str, problems: &mut Vec<String>) {
     qymcad_ui_state::rebuild_if_dirty(&mut app.rebuild_ctx());
     // 1. THE GEOMETRY: not a single red node.
     // WHAT COUNTS AS RED IS WHAT THE PROGRAM COULD NOT EXPLAIN. A named refusal is a conversation: "the

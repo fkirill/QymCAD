@@ -37,11 +37,11 @@ mod tests {
         // a SIDE wall of the plate: perpendicular to the sketch plane, so the pick passes it over
         hand.click([60.0, 20.0, 6.0]);
         assert!(hand.app.tools.cmd.stop_face.is_none(), "a perpendicular face was taken as the stop");
-        assert_eq!(hand.app.status, qymcad_i18n::tr("vp-miss-parallel-face"), "the pick said why it took nothing");
+        assert_eq!(hand.app.status, qymcad_ui_state::Notice::refusal(qymcad_i18n::tr("vp-miss-parallel-face")), "the pick said why it took nothing");
         // the TOP face: parallel, and it is taken
         hand.click([30.0, 20.0, 12.0]);
-        let (_, key) = hand.app.tools.cmd.stop_face.expect("the top face is taken as the stop");
-        assert_ne!(key.id, 0, "the stop carries the persistent face id");
+        let taken = hand.app.tools.cmd.stop_face.clone().expect("the top face is taken as the stop");
+        assert_ne!(taken.key.id, 0, "the stop carries the persistent face id");
         // the length arrow is off while the face drives the stop
         assert!(qymcad_ui_state::feat_cmd_arrows(&hand.app.tools.cmd, &hand.app.tools.gsel, &hand.app.project, hand.app.feat.flip).is_empty(), "an arrow is offered while a face sets the stop");
         hand.enter();

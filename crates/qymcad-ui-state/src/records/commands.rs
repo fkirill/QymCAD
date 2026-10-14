@@ -300,9 +300,10 @@ pub struct FeatCommand {
     /// when the face is picked or the mode is left
     pub pick_face: Option<FaceSlot>,
     /// the picked faces of a face-driven extent: the stop (`ExtentMode::UpToFace`) and the start; each
-    /// is the body and the key the pick took (its persistent id plus the fingerprint of the moment)
-    pub stop_face: Option<(Id, qymcad_core::feature::FaceKey)>,
-    pub start_face: Option<(Id, qymcad_core::feature::FaceKey)>,
+    /// is the whole key the pick took - the persistent id plus the fingerprint of the moment - on the
+    /// body it lives on
+    pub stop_face: Option<qymcad_core::feature::ReachedFace>,
+    pub start_face: Option<qymcad_core::feature::ReachedFace>,
 }
 
 impl FeatCommand {

@@ -373,8 +373,11 @@ pub fn apply_sketch_cmd(pc: &mut qymcad_ui_state::PartCtx, cmd: u8) -> Option<Id
                                             // THE FACES OF A FACE-DRIVEN EXTENT, as the node will hold them: the body and the recipe of the
                                             // face, the fingerprint taken at the pick. Their distances are measured at every rebuild, so no
                                             // number goes in here - the height is dead in these modes and stays at zero.
-        let face_ref = |pick: &Option<(qymcad_core::model::Id, qymcad_core::feature::FaceKey)>| {
-            pick.as_ref().map(|(b, k)| qymcad_core::feature::FaceRef { body: *b, face: qymcad_core::refs::Ref::one(k.id, qymcad_core::refs::Fingerprint { centroid: k.centroid, normal: k.normal }) })
+        let face_ref = |pick: &Option<qymcad_core::feature::ReachedFace>| {
+            pick.as_ref().map(|rf| qymcad_core::feature::FaceRef {
+                body: rf.body,
+                face: qymcad_core::refs::Ref::one(rf.key.id, qymcad_core::refs::Fingerprint { centroid: rf.key.centroid, normal: rf.key.normal }),
+            })
         };
         let from_ref = (pc.cmd.from == qymcad_ui_state::ExtentStart::Face).then(|| face_ref(&pc.cmd.start_face)).flatten();
         let up_to = pc.cmd.extent.up_to_face();

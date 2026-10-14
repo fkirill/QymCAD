@@ -528,9 +528,10 @@ impl CmdArrow {
 /// plane to the face, read off the live rebuild. `None` when the sketch or the face is not there - the
 /// preview then draws what it can and the apply says the rest. This is what the command shows while it is
 /// in hand; the rebuild measures the same way in the core.
-pub fn reached_face_place(project: &Project, cmd: &FeatCommand, face: Option<(Id, qymcad_core::feature::FaceKey)>) -> Option<f64> {
+pub fn reached_face_place(project: &Project, cmd: &FeatCommand, face: Option<&qymcad_core::feature::ReachedFace>) -> Option<f64> {
     let si = cmd.sketch?;
-    let (body, key) = face?;
+    let fr = face?;
+    let (body, key) = (fr.body, &fr.key);
     let frame = project.sketch_frame(si)?;
     let n = frame.normal();
     let c = project.face_pool(body).into_iter().find(|c| c.desc == key.id)?;
@@ -546,7 +547,7 @@ pub fn feat_cmd_arrows(cmd: &FeatCommand, gsel: &GeomSelection, project: &Projec
     }
     let Some((base, n, h)) = feat_cmd_axis(cmd, gsel, project) else { return Vec::new() };
     // a start face moves the whole extent with it: the arrows stand at the face, where the sweep begins
-    let d_from = reached_face_place(project, cmd, cmd.start_face).unwrap_or(0.0);
+    let d_from = reached_face_place(project, cmd, cmd.start_face.as_ref()).unwrap_or(0.0);
     let base = [base[0] + n[0] * d_from, base[1] + n[1] * d_from, base[2] + n[2] * d_from];
     let dir = if flip { [-n[0], -n[1], -n[2]] } else { n };
     let mut out = vec![CmdArrow { base, dir, len: h, key: "height" }];

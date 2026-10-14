@@ -66,10 +66,10 @@ pub fn start_feat_cmd_edit(pc: &mut qymcad_ui_state::PartCtx, fid: Id) {
             // picked with its key, one that does not opens with nothing and the pick waits, as a rounding
             // waits for its edges. The key keeps the fingerprint the node holds, so the pick says where
             // the face was even while it is lost.
-            let back = |pick: Option<&qymcad_core::feature::FaceRef>| -> Option<(qymcad_core::model::Id, qymcad_core::feature::FaceKey)> {
+            let back = |pick: Option<&qymcad_core::feature::FaceRef>| -> Option<qymcad_core::feature::ReachedFace> {
                 let fr = pick?;
                 let found = pc.project.resolve_face_refs(fr.body, &fr.face, "ref-what-reached-face").ok()?.first().copied()?;
-                Some((fr.body, qymcad_core::feature::FaceKey { index: 0, centroid: fr.face.hint.centroid, normal: fr.face.hint.normal, id: found }))
+                Some(qymcad_core::feature::ReachedFace { body: fr.body, key: qymcad_core::feature::FaceKey { index: 0, centroid: fr.face.hint.centroid, normal: fr.face.hint.normal, id: found } })
             };
             pc.cmd.stop_face = match &extent.stop {
                 qymcad_core::feature::Stop::UpToFace(fr) => back(Some(fr)),

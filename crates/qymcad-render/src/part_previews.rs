@@ -578,16 +578,23 @@ pub fn draw_reached_face_picker(pn: &Painting, painter: &egui::Painter, rect: Re
     let scr = qymcad_ui_state::Screen { cam: &pn.cam, set: pn.set, rect, basis: &basis };
     let ctx = qymcad_ui_state::current_ctx_id(pn.active_path, pn.project);
     let hovered = if active { painter.ctx().pointer_hover_pos().and_then(|p| qymcad_pick::pick_face_parallel_at(pn, rect, p)) } else { None };
-    let mut faces: Vec<(qymcad_core::model::Id, u32, bool)> = Vec::new();
-    if let Some((b, k)) = hovered {
-        faces.push((b, k.id, true));
+    // what stands lit: the face under the cursor in the hover colour, the faces already taken in the
+    // colour of the selection - one named record, not a triple with a flag
+    struct LitFace {
+        face: qymcad_core::feature::ReachedFace,
+        hot: bool,
     }
-    for (b, k) in [pn.cmd.stop_face.filter(|_| taken_stop), pn.cmd.start_face.filter(|_| taken_start)].into_iter().flatten() {
-        if !faces.iter().any(|(fb, fk, _)| *fb == b && *fk == k.id) {
-            faces.push((b, k.id, false));
+    let mut faces: Vec<LitFace> = Vec::new();
+    if let Some(hover) = hovered {
+        faces.push(LitFace { face: hover, hot: true });
+    }
+    for taken in [pn.cmd.stop_face.clone().filter(|_| taken_stop), pn.cmd.start_face.clone().filter(|_| taken_start)].into_iter().flatten() {
+        if !faces.iter().any(|lit| lit.face.body == taken.body && lit.face.key.id == taken.key.id) {
+            faces.push(LitFace { face: taken, hot: false });
         }
     }
-    for (body, fid, hot) in faces {
+    for lit in faces {
+        let (body, fid, hot) = (lit.face.body, lit.face.key.id, lit.hot);
         let Some(mi) = pn.project.mesh_index(body) else { continue };
         let Some(fi) = pn.project.bodies.get(mi).and_then(|bs| bs.faces.iter().position(|f| f.id == fid)) else { continue };
         let mesh = &pn.project.bodies[mi].mesh;
@@ -923,11 +930,11 @@ pub fn draw_feat_cmd_preview(pn: &Painting, painter: &egui::Painter, rect: Rect)
     // the preview extent is EXACTLY the one the rebuild uses: direction/flip/symmetry/two sides. The
     // distances come from the expression fields at the geometry (cmd_val), with no lag, so preview = result.
     let down = if pn.cmd.extent.two_sided() { qymcad_ui_state::cmd_val(pn.cmd, "down").abs() } else { 0.0 };
-    let d_from = qymcad_ui_state::reached_face_place(pn.project, pn.cmd, pn.cmd.start_face).unwrap_or(0.0);
+    let d_from = qymcad_ui_state::reached_face_place(pn.project, pn.cmd, pn.cmd.start_face.as_ref()).unwrap_or(0.0);
     let (start, total) = if pn.cmd.extent.up_to_face() {
         // the band between the two faces; a face that does not resolve leaves nothing to draw, and the
         // pick or the refusal says the rest
-        let Some(d_stop) = qymcad_ui_state::reached_face_place(pn.project, pn.cmd, pn.cmd.stop_face) else { return };
+        let Some(d_stop) = qymcad_ui_state::reached_face_place(pn.project, pn.cmd, pn.cmd.stop_face.as_ref()) else { return };
         (d_from, d_stop - d_from)
     } else {
         let (start, total) = qymcad_core::feature::extrude_extent(h, down, qymcad_ui_state::cmd_reach(pn.cmd, pn.feat));

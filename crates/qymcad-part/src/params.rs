@@ -492,20 +492,21 @@ pub fn restore_bar_counts(bar_exprs: &mut std::collections::HashMap<&'static str
 /// TAKE THE FACE THE FACE-DRIVEN EXTENT CLICKED: the slot the command is picking (the stop of the sweep
 /// or its start), the same face again letting it go. The pick keeps the whole key - the persistent id
 /// plus the fingerprint of the moment - which is what goes into the node at apply.
-pub fn take_reached_face(pc: &mut qymcad_ui_state::PartCtx, picked: Option<(qymcad_core::model::Id, qymcad_core::feature::FaceKey)>) {
-    let Some((body, key)) = picked else {
+pub fn take_reached_face(pc: &mut qymcad_ui_state::PartCtx, picked: Option<qymcad_core::feature::ReachedFace>) {
+    let Some(taken) = picked else {
         *pc.status = qymcad_ui_state::Notice::refusal(qymcad_i18n::tr("vp-miss-parallel-face"));
         return;
     };
     let Some(slot) = pc.cmd.pick_face else { return };
-    let slot_of = |face: &mut Option<(qymcad_core::model::Id, qymcad_core::feature::FaceKey)>, next: (qymcad_core::model::Id, qymcad_core::feature::FaceKey)| {
+    let slot_of = |face: &mut Option<qymcad_core::feature::ReachedFace>, next: qymcad_core::feature::ReachedFace| {
         // the same face again lets it go, as every pick of a plane or an axis does
-        *face = (*face != Some(next)).then_some(next);
+        let held = *face == Some(next.clone());
+        *face = (!held).then_some(next);
         face.is_some()
     };
     let held = match slot {
-        qymcad_ui_state::FaceSlot::Stop => slot_of(&mut pc.cmd.stop_face, (body, key)),
-        qymcad_ui_state::FaceSlot::Start => slot_of(&mut pc.cmd.start_face, (body, key)),
+        qymcad_ui_state::FaceSlot::Stop => slot_of(&mut pc.cmd.stop_face, taken),
+        qymcad_ui_state::FaceSlot::Start => slot_of(&mut pc.cmd.start_face, taken),
     };
     if !held {
         pc.cmd.pick_face = Some(slot); // the face was let go, so the pick stays armed for the next click

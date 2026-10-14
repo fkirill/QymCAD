@@ -8,6 +8,9 @@
 use super::*;
 
 #[cfg(test)]
+mod a_cut_reaches_to_a_picked_face;
+
+#[cfg(test)]
 mod command_flow_tests;
 
 #[cfg(test)]

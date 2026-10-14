@@ -191,8 +191,11 @@ pub fn update_feat(pc: &mut qymcad_ui_state::PartCtx, fid: Id) -> Option<Id> {
     let down = if pc.cmd.extent.two_sided() { qymcad_ui_state::cmd_val(pc.cmd, "down").abs() } else { 0.0 };
     let through = pc.cmd.extent.through();
     // the faces of a face-driven extent, captured before the timeline is borrowed (as every value above)
-    let reached = |pick: &Option<(qymcad_core::model::Id, qymcad_core::feature::FaceKey)>| {
-        pick.as_ref().map(|(b, k)| qymcad_core::feature::FaceRef { body: *b, face: qymcad_core::refs::Ref::one(k.id, qymcad_core::refs::Fingerprint { centroid: k.centroid, normal: k.normal }) })
+    let reached = |pick: &Option<qymcad_core::feature::ReachedFace>| {
+        pick.as_ref().map(|rf| qymcad_core::feature::FaceRef {
+            body: rf.body,
+            face: qymcad_core::refs::Ref::one(rf.key.id, qymcad_core::refs::Fingerprint { centroid: rf.key.centroid, normal: rf.key.normal }),
+        })
     };
     let from_edit = (pc.cmd.from == qymcad_ui_state::ExtentStart::Face).then(|| reached(&pc.cmd.start_face)).flatten();
     let stop_edit = if pc.cmd.extent.up_to_face() { reached(&pc.cmd.stop_face) } else { None };
