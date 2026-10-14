@@ -498,6 +498,95 @@ pub fn pick_cyl_face_axis_at(pn: &Painting, rect: Rect, screen: Pos2) -> Option<
     best.map(|(_, b, fid)| AxisHit::Face(b, fid))
 }
 
+/// THE FACE A TOOL REACHES TO under the cursor: the nearest face that is a plane, is parallel to the
+/// sketch plane of the command in hand within the shared tolerance, and belongs to a body of the sketch's
+/// own component that stands at or above the node being edited - a face of another component is not
+/// offered, and neither is a face the feature's input could not legally read. `None` means the cursor is
+/// over nothing the tool can take, and the click is left to say so.
+pub fn pick_face_parallel_at(pn: &Painting, rect: Rect, screen: Pos2) -> Option<(qymcad_core::model::Id, qymcad_core::feature::FaceKey)> {
+    use qymcad_core::feature::FaceKey;
+    // the sketch plane gives the direction parallelism is measured against; a command without a sketch
+    // takes no face
+    let si = pn.cmd.sketch?;
+    let sid = pn.project.sketches.get(si)?.id;
+    let owner = pn.project.sketch_owner(sid)?;
+    // one space only: within the component of the sketch the bodies' local face data and the sketch
+    // placement meet without a transform, which is why faces of other components are out of reach here
+    let ctx = current_ctx_id(pn.active_path, pn.project);
+    if ctx != owner {
+        return None;
+    }
+    let frame = pn.project.sketch_frame(si)?;
+    let plane_n = v_norm(v_cross(frame.x, frame.y));
+    let cos_tol = qymcad_core::feature::REACHED_FACE_PARALLEL_TOL_DEG.to_radians().cos();
+    // bodies at or above the edited node: a body the node's input cannot read is not offered, the
+    // reorder guard would refuse it at apply anyway and the pick saying so earlier costs less
+    let above: Option<std::collections::HashSet<qymcad_core::model::Id>> = pn.cmd.edit.map(|fid| {
+        let mut made = std::collections::HashSet::new();
+        for n in pn.project.timeline.iter().take_while(|n| n.id != fid) {
+            for b in n.kind.bodies() {
+                made.insert(b);
+            }
+        }
+        made
+    });
+    let taken = |b: qymcad_core::model::Id, f: &FaceKey| -> bool {
+        if pn.project.body_owner(b) != Some(owner) || f.id == 0 {
+            return false;
+        }
+        if let Some(made) = &above {
+            if !made.contains(&b) {
+                return false;
+            }
+        }
+        if !pn.live.shapes.get(&b).is_some_and(|s| s.face_is_plane(f.id)) {
+            return false; // a curved face is neither planar nor parallel, however flat it looks
+        }
+        let m = v_norm(f.normal);
+        v_dot(plane_n, m).abs() >= cos_tol
+    };
+    let basis = pn.cam.basis();
+    let scr = qymcad_ui_state::Screen { cam: &pn.cam, set: pn.set, rect, basis: &basis };
+    let consumed = consumed_bodies(pn.project);
+    let edit_hide = edit_hidden_bodies(pn.cmd, pn.project);
+    let edit_src = if !edit_hide.is_empty() { edit_src_body(pn.cmd, pn.project) } else { None };
+    let mut face_best: Option<(f64, qymcad_core::model::Id, FaceKey)> = None;
+    for (mi, mesh) in pn.project.bodies.iter().map(|b| &b.mesh).enumerate() {
+        if !body_shown(pn.body_view(), mi) {
+            continue;
+        }
+        let bid = pn.project.mesh_id(mi);
+        if bid.is_some_and(|b| edit_hide.contains(&b)) || bid.is_some_and(|b| consumed.contains(&b) && Some(b) != edit_src) {
+            continue; // a hidden body (consumed, or the result of an edit) - its faces are not picked
+        }
+        let wt = bid.map(|b| pn.project.body_display_transform(b, ctx)).unwrap_or(qymcad_core::feature::PLACE_IDENTITY);
+        let tp = |v: [f64; 3]| if qymcad_core::feature::is_identity12(&wt) { v } else { qymcad_core::feature::apply12(&wt, v) };
+        for ti in 0..mesh.tris.len() {
+            let t = mesh.triangle(ti);
+            let (wa, wb, wc) = (tp([t[0].x, t[0].y, t[0].z]), tp([t[1].x, t[1].y, t[1].z]), tp([t[2].x, t[2].y, t[2].z]));
+            if v_dot(v_norm(v_cross(v_sub(wb, wa), v_sub(wc, wa))), basis.2) >= 0.0 {
+                continue; // a back-facing triangle is invisible and is not picked
+            }
+            let (pa, da) = scr.at(wa);
+            let (pb, db) = scr.at(wb);
+            let (pc, dc) = scr.at(wc);
+            if point_in_tri(screen, pa, pb, pc) {
+                let depth = tri_depth_at(screen, pa, da, pb, db, pc, dc);
+                if face_best.as_ref().is_none_or(|(bd, _, _)| depth < *bd) {
+                    if let (Some(b), Some(fi)) = (bid, pn.project.bodies.get(mi).and_then(|bs| bs.faces.iter().position(|f| f.triangles.contains(&(ti as u32))))) {
+                        let face = &pn.project.bodies[mi].faces[fi];
+                        let key = FaceKey { index: fi as u32, centroid: [face.centroid.x, face.centroid.y, face.centroid.z], normal: face.normal, id: face.id };
+                        if taken(b, &key) {
+                            face_best = Some((depth, b, key));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    face_best.map(|(_, b, k)| (b, k))
+}
+
 /// A CORNER OR AN EDGE UNDER THE CURSOR, as the selection takes it with nothing in hand: a corner within the point
 /// grab first, then an edge within the curve grab - each only where no face stands in front of it. A corner is where
 /// edges meet: the seam of a closed rim and a smooth junction are not corners.
