@@ -18,7 +18,13 @@ fn an_addition_that_touches_nothing_is_refused_and_the_body_stays_one_piece() {
     p.add_circle_entity(si, 0.0, 40.0, 6.0, Purpose::Real);
     p.regen_sketch(si);
     let circle: Vec<u64> = p.sketches[si].contour_ids.iter().copied().filter(|c| p.contour_profile_xy(*c).is_some()).collect();
-    let add = p.add_combine_multi_op(block, sid, circle, CombineSpan { height: 5.0, down: 0.0, extent: qymcad_core::feature::Extent { reach: Reach::Forward, ..Default::default() }, fill: &[] }, 1);
+    let add = p.add_combine_multi_op(
+        block,
+        sid,
+        circle,
+        CombineSpan { height: 5.0, down: 0.0, extent: qymcad_core::feature::Extent { reach: Reach::Forward, ..Default::default() }, fill: &[], from: None },
+        1,
+    );
     let (report, shapes) = qymcad_testkit::regenerate(&mut p);
     let body = shapes.get(&add).expect("the addition passes the block on");
     assert_eq!(body.solid_count(), 1, "the body of the part is {} pieces, {:.0} mm^3", body.solid_count(), body.volume());
@@ -38,7 +44,13 @@ fn an_addition_across_the_edge_joins_the_block() {
     p.add_circle_entity(si, 0.0, 15.0, 6.0, Purpose::Real);
     p.regen_sketch(si);
     let circle: Vec<u64> = p.sketches[si].contour_ids.iter().copied().filter(|c| p.contour_profile_xy(*c).is_some()).collect();
-    let add = p.add_combine_multi_op(block, sid, circle, CombineSpan { height: 5.0, down: 0.0, extent: qymcad_core::feature::Extent { reach: Reach::Forward, ..Default::default() }, fill: &[] }, 1);
+    let add = p.add_combine_multi_op(
+        block,
+        sid,
+        circle,
+        CombineSpan { height: 5.0, down: 0.0, extent: qymcad_core::feature::Extent { reach: Reach::Forward, ..Default::default() }, fill: &[], from: None },
+        1,
+    );
     let (report, shapes) = qymcad_testkit::regenerate(&mut p);
     assert!(report.errors.is_empty(), "the touching addition was refused: {:?}", report.errors);
     let body = shapes.get(&add).expect("the joined body");

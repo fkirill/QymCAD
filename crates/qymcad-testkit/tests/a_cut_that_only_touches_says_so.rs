@@ -16,7 +16,8 @@ fn a_cut_away_from_the_block_is_refused_in_words() {
     p.add_rect_entity(si, -5.0, -5.0, 5.0, 5.0, Purpose::Real);
     p.regen_sketch(si);
     let c: Vec<u64> = p.sketches[si].contour_ids.iter().copied().filter(|c| p.contour_profile_xy(*c).is_some()).collect();
-    let cut = p.add_combine_multi_op(block, sid, c, CombineSpan { height: 5.0, down: 0.0, extent: qymcad_core::feature::Extent { reach: Reach::Backward, ..Default::default() }, fill: &[] }, 0);
+    let cut =
+        p.add_combine_multi_op(block, sid, c, CombineSpan { height: 5.0, down: 0.0, extent: qymcad_core::feature::Extent { reach: Reach::Backward, ..Default::default() }, fill: &[], from: None }, 0);
     let (report, shapes) = qymcad_testkit::regenerate(&mut p);
     let v = shapes.get(&cut).map(|s| s.volume()).unwrap_or(0.0);
     assert!(report.errors.iter().any(|(id, e)| *id == cut && matches!(e, CoreError::CutRemovedNothing)), "a cut away from the block was not refused in words ({v:.1} mm^3 left): {:?}", report.errors);

@@ -15,7 +15,8 @@ fn cut_through(width: f64) -> (Project, u64, u64) {
     p.add_rect_entity(si, -width / 2.0, -20.0, width / 2.0, 20.0, Purpose::Real);
     p.regen_sketch(si);
     let c: Vec<u64> = p.sketches[si].contour_ids.iter().copied().filter(|c| p.contour_profile_xy(*c).is_some()).collect();
-    let cut = p.add_combine_multi_op(block, sid, c, CombineSpan { height: 10.0, down: 0.0, extent: qymcad_core::feature::Extent { reach: Reach::Forward, ..Default::default() }, fill: &[] }, 0);
+    let cut =
+        p.add_combine_multi_op(block, sid, c, CombineSpan { height: 10.0, down: 0.0, extent: qymcad_core::feature::Extent { reach: Reach::Forward, ..Default::default() }, fill: &[], from: None }, 0);
     (p, cut, sid)
 }
 

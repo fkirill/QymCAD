@@ -383,6 +383,18 @@ pub enum CoreError {
     /// feature may have landed in the wrong place. This does not fail the rebuild, but the user has to be told
     /// why the result came out different.
     SketchFaceRefLost { sketch: crate::model::Id, body: crate::model::Id },
+    /// A face a profile operation reaches to was not found by its recipe; `was` says where the face stood
+    /// when it was picked, for the reader of the refusal.
+    ReachedFaceLost { end: crate::feature::FaceEnd, was: crate::refs::Fingerprint },
+    /// A face a profile operation reaches to is no longer parallel to the sketch plane.
+    ReachedFaceNotParallel { end: crate::feature::FaceEnd },
+    /// The stop face of a profile operation stands behind its start face, so the tool has a negative span.
+    ReachedFacesCrossed,
+    /// "Through all" was given a start face, a pair the tool cannot honor at once.
+    ThroughWithStartFace,
+    /// A warning: the start and stop faces of a profile operation met, the tool has no length, and the
+    /// operation changed nothing.
+    ReachedFacesMet,
     /// There are no contours for the operation.
     NoContours,
     /// Every selected edge is a smooth junction, a boundary of a fillet, so there is nothing to fillet or
@@ -509,6 +521,11 @@ impl CoreError {
             CrossComponentInput { .. } => "error-cross-component-input".into(),
             SketchOnForeignFace { .. } => "error-sketch-on-foreign-face".into(),
             SketchFaceRefLost { .. } => "error-sketch-face-ref-lost".into(),
+            ReachedFaceLost { end, .. } => end.words("error-start-face-lost", "error-stop-face-lost").to_string(),
+            ReachedFaceNotParallel { end } => end.words("error-start-face-not-parallel", "error-stop-face-not-parallel").to_string(),
+            ReachedFacesCrossed => "error-reached-faces-crossed".into(),
+            ThroughWithStartFace => "error-through-with-start-face".into(),
+            ReachedFacesMet => "error-reached-faces-met".into(),
             NoContours => "error-no-contours".into(),
             AllEdgesSmooth => "error-all-edges-smooth".into(),
             FilletRadiusTooBig { .. } => "error-fillet-radius-too-big".into(),
@@ -570,6 +587,11 @@ impl std::fmt::Display for CoreError {
             CrossComponentInput { input } => write!(f, "cross-component input {input}"),
             SketchOnForeignFace { input } => write!(f, "sketch input {input} sits on a foreign face"),
             SketchFaceRefLost { sketch, body } => write!(f, "sketch {sketch} lost its face ref on body {body}"),
+            ReachedFaceLost { end, .. } => write!(f, "reached {} face lost", end.words("start", "stop")),
+            ReachedFaceNotParallel { end } => write!(f, "reached {} face not parallel", end.words("start", "stop")),
+            ReachedFacesCrossed => write!(f, "the stop face stands behind the start face"),
+            ThroughWithStartFace => write!(f, "through all with a start face"),
+            ReachedFacesMet => write!(f, "the start and stop faces met"),
             FilletRadiusTooBig { radius, issues, .. } => write!(f, "fillet R{radius:.2} failed on {} edges", issues.len()),
             FilletEdgesOneByOne { radius } => write!(f, "fillet R{radius:.2} only works edge by edge"),
             ChamferTooBig { dist } => write!(f, "chamfer {dist:.2} too big"),

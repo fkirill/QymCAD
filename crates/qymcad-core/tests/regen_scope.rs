@@ -28,7 +28,7 @@ fn dependents_sees_the_chain_and_stops_there() {
         base,
         s2,
         p.sketches[si2].contour_ids.clone(),
-        qymcad_core::model::CombineSpan { height: 5.0, down: 0.0, extent: qymcad_core::feature::Extent::default(), fill: &[] },
+        qymcad_core::model::CombineSpan { height: 5.0, down: 0.0, extent: qymcad_core::feature::Extent::default(), from: None, fill: &[] },
         0,
     );
     // an independent part: its own chain, with no shared inputs

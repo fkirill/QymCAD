@@ -162,7 +162,7 @@ fn matrix_ops_on_plate() {
                 plate,
                 sid,
                 closed.clone(),
-                qymcad_core::model::CombineSpan { height: h, down: 0.0, extent: qymcad_core::feature::Extent { reach, ..Default::default() }, fill: &[] },
+                qymcad_core::model::CombineSpan { height: h, down: 0.0, extent: qymcad_core::feature::Extent { reach, ..Default::default() }, fill: &[], from: None },
                 op,
             );
             let (report, shapes) = qymcad_testkit::regenerate(&mut p);

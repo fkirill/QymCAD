@@ -35,8 +35,8 @@ fn extrude_two_sided_and_combine_through_stored() {
     let base = p.add_extrude_on(sid, 0, 5.0, qymcad_core::feature::Reach::Forward, 3.0); // Second side of 3.
     let down = p.timeline.iter().find_map(|n| if let FeatureKind::Extrude { down, .. } = n.kind { Some(down) } else { None }).unwrap();
     assert_eq!(down, 3.0, "the second side must be stored in the feature");
-    let cut = p.add_combine_on(base, sid, 0, qymcad_core::model::CombineSpan { height: 5.0, down: 0.0, extent: qymcad_core::feature::Extent { through: true, ..Default::default() }, fill: &[] }, 0); // A through cut.
-    let through = p.timeline.iter().find_map(|n| if let FeatureKind::Combine { extent, .. } = n.kind { Some(extent.through) } else { None }).unwrap();
+    let cut = p.add_combine_on(base, sid, 0, qymcad_core::model::CombineSpan { height: 5.0, down: 0.0, extent: qymcad_core::feature::Extent { stop: qymcad_core::feature::Stop::Through, ..Default::default() }, fill: &[], from: None }, 0); // A through cut.
+    let through = p.timeline.iter().find_map(|n| if let FeatureKind::Combine { extent, .. } = &n.kind { Some(extent.stop == qymcad_core::feature::Stop::Through) } else { None }).unwrap();
     assert!(through, "through all must be stored in the cut feature");
     let _ = cut;
 }

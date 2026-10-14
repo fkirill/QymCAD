@@ -392,6 +392,6 @@ impl Project {
 
     /// Operation using the first closed contour of a sketch against body `src`.
     pub fn add_combine(&mut self, src: Id, sketch: Id, height: f64, op: u8) -> Id {
-        self.add_combine_on(src, sketch, 0, crate::model::CombineSpan { height, down: 0.0, extent: crate::feature::Extent::default(), fill: &[] }, op)
+        self.add_combine_on(src, sketch, 0, crate::model::CombineSpan { height, down: 0.0, extent: crate::feature::Extent::default(), from: None, fill: &[] }, op)
     }
 }

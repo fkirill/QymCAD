@@ -57,7 +57,7 @@ fn a_boolean_after_a_boss_on_a_piece_is_not_folded_into_the_boss() {
     let sid = p.add_line_sketch("boss", vec![Point2::new(2.0, 2.0), Point2::new(8.0, 2.0), Point2::new(8.0, 8.0), Point2::new(2.0, 8.0)], true);
     p.add_sketch_node(sid, "boss");
     let contours = p.sketches[p.sketch_index(sid).expect("the sketch")].contour_ids.clone();
-    let boss = p.add_combine_multi_op(lower, sid, contours, qymcad_core::model::CombineSpan { height: 8.0, down: 0.0, extent: Default::default(), fill: &[] }, 1);
+    let boss = p.add_combine_multi_op(lower, sid, contours, qymcad_core::model::CombineSpan { height: 8.0, down: 0.0, extent: Default::default(), from: None, fill: &[] }, 1);
     let grown = p.timeline.iter().find(|n| n.id == boss).and_then(|n| n.kind.body()).expect("the boss names a body");
     p.add_body_boolean(upper, grown, 0);
     assert!(p.feature_op_span(boss) == vec![boss], "the person's boolean is folded into the boss's row: {:?}", p.feature_op_span(boss));

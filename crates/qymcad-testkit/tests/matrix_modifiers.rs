@@ -315,12 +315,13 @@ fn matrix_fillet_short_step_edges() {
         let (inner, outer) = (cc[0].0, cc[1].0);
         // the outer one (the step ring) is a 1 mm pocket; the inner one goes all the way through
         // the sketch is on world XY (z=0 is the bottom of the plate), so the tool grows UP (flip=false)
-        let cut1 = p.add_combine_multi_op(plate, sid2, vec![outer], qymcad_core::model::CombineSpan { height: 1.0, down: 0.0, extent: qymcad_core::feature::Extent::default(), fill: &[] }, 0);
+        let cut1 =
+            p.add_combine_multi_op(plate, sid2, vec![outer], qymcad_core::model::CombineSpan { height: 1.0, down: 0.0, extent: qymcad_core::feature::Extent::default(), from: None, fill: &[] }, 0);
         let cut2 = p.add_combine_multi_op(
             cut1,
             sid2,
             vec![inner],
-            qymcad_core::model::CombineSpan { height: 2.0, down: 0.0, extent: qymcad_core::feature::Extent { through: true, ..Default::default() }, fill: &[] },
+            qymcad_core::model::CombineSpan { height: 2.0, down: 0.0, extent: qymcad_core::feature::Extent { stop: qymcad_core::feature::Stop::Through, ..Default::default() }, fill: &[], from: None },
             0,
         );
         (p, cut2)

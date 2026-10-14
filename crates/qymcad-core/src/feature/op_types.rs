@@ -83,12 +83,60 @@ pub enum Reach {
 /// Three booleans in a row used to say this, and `add_combine_on(base, sid, c, 20.0, 0, true, true, false,
 /// 0.0)` tells a reader nothing about which of them is which. Named fields cost one word each at the call
 /// site, and the plain case - one-sided, forwards, by the given height - is the default.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Extent {
-    /// go the whole way through whatever stands in the way, ignoring the height
-    pub through: bool,
+    /// where the sweep stops: at the typed height, through everything in the way, or at a picked face.
+    /// The default keeps an older file opening: its extent comes back as the typed length it was written
+    /// with, a through cut included - the recorded price of changing a format straight.
+    #[serde(default)]
+    pub stop: Stop,
     /// which way the tool grows from the plane
     pub reach: Reach,
+}
+
+/// WHERE THE SWEEP OF A TOOL STOPS.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub enum Stop {
+    /// at the typed height
+    #[default]
+    Length,
+    /// the whole way through whatever stands in the way, ignoring the height
+    Through,
+    /// at a picked face parallel to the sketch plane: the distance to the face is the extent, re-read
+    /// from the live geometry at every rebuild, so the tool follows the face
+    UpToFace(FaceRef),
+}
+
+/// HOW FAR FROM PARALLEL A REACHED FACE MAY STAND, in degrees, and still be taken as parallel to the
+/// sketch plane. One constant for the pick and for the rebuild: a face the pick accepts and the next
+/// rebuild refuses would be a lie between the two layers.
+pub const REACHED_FACE_PARALLEL_TOL_DEG: f64 = 1.0;
+
+/// WHICH FACE of a face-driven extent a refusal names: the start of the sweep or its stop.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FaceEnd {
+    Start,
+    Stop,
+}
+
+impl FaceEnd {
+    /// The word of this end: one of two whole catalogue keys (or plain words for `Display`), so that a
+    /// refusal names a complete key rather than a base a format string finishes.
+    pub fn words(self, start: &'static str, stop: &'static str) -> &'static str {
+        match self {
+            FaceEnd::Start => start,
+            FaceEnd::Stop => stop,
+        }
+    }
+}
+
+/// A FACE A PROFILE OPERATION REACHES TO: the body holding it and the recipe of the face. The recipe is
+/// resolved afresh at every rebuild (see `refs`): a body id alone would lose the face at the first edit,
+/// and a face alone would not say which body to read it from.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FaceRef {
+    pub body: Id,
+    pub face: crate::refs::Ref,
 }
 
 /// WHICH WAY THE WALL OF A SHELL GOES from the face it is measured on.

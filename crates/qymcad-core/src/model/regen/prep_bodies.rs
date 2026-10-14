@@ -609,9 +609,9 @@ impl Project {
             FeatureKind::Cone { r1, r2, h, body } => (*body, self.prep_cone(p, *r1, *r2, *h, *body)),
             FeatureKind::Torus { major, minor, body } => (*body, self.prep_torus(p, *major, *minor, *body)),
             FeatureKind::Prism { r, n, h, body } => (*body, self.prep_prism(p, *r, *n, *h, *body)),
-            FeatureKind::Combine { src, sketch, profiles, height, op, extent, down, fill, body, .. } => {
+            FeatureKind::Combine { src, sketch, profiles, height, op, extent, down, from, fill, body, .. } => {
                 let prof = Profile { sketch: *sketch, profiles };
-                let span = CombineSpan { height: *height, down: *down, extent: *extent, fill };
+                let span = CombineSpan { height: *height, down: *down, extent: extent.clone(), from: from.clone(), fill };
                 (*body, self.prep_combine(p, prof, span, BodyOp { src: *src, op: *op, body: *body }))
             }
             FeatureKind::Fillet { src, radius, edges, at_vertices, body } => (*body, self.prep_fillet(p, *src, *radius, edges, at_vertices, *body)),

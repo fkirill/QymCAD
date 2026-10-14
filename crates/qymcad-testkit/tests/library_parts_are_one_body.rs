@@ -59,7 +59,7 @@ fn translate_the_library_parts() {
             match n.kind.clone() {
                 FeatureKind::Extrude { sketch, profiles, height, down, fill, body, .. } => {
                     if let Some(src) = cur {
-                        n.kind = FeatureKind::Combine { src, sketch, profiles, height, op: 1, extent: Default::default(), down, fill, body, pieces: Vec::new() };
+                        n.kind = FeatureKind::Combine { src, sketch, profiles, height, op: 1, extent: Default::default(), from: None, down, fill, body, pieces: Vec::new() };
                     }
                     cur = Some(body);
                 }

@@ -213,7 +213,7 @@ fn a_cut_or_a_boss_lands_flush() {
         p.regen_sketch(si);
         let c: Vec<u64> = p.sketches[si].contour_ids.iter().copied().filter(|c| p.contour_profile_xy(*c).is_some()).collect();
         let reach = if cell.what == Combine::Cut { Reach::Forward } else { Reach::Backward };
-        let span = qymcad_core::model::CombineSpan { height: cell.height, down: 0.0, extent: qymcad_core::feature::Extent { reach, ..Default::default() }, fill: &[] };
+        let span = qymcad_core::model::CombineSpan { height: cell.height, down: 0.0, extent: qymcad_core::feature::Extent { reach, ..Default::default() }, fill: &[], from: None };
         let node = p.add_combine_multi_op(block, sid, c, span, cell.what.code());
         let (report, shapes) = qymcad_testkit::regenerate(&mut p);
         if let Some((_, e)) = report.errors.iter().find(|(id, _)| *id == node) {

@@ -10,7 +10,7 @@ fn multi_op_is_single_node_with_all_profiles() {
     let s = square(&mut p, "s");
     let before = p.timeline.len();
     // Three contours in a single operation; src = 0 makes a new body.
-    let body = p.add_combine_multi_op(0, s, vec![101, 102, 103], qymcad_core::model::CombineSpan { height: 5.0, down: 0.0, extent: qymcad_core::feature::Extent::default(), fill: &[] }, 1);
+    let body = p.add_combine_multi_op(0, s, vec![101, 102, 103], qymcad_core::model::CombineSpan { height: 5.0, down: 0.0, extent: qymcad_core::feature::Extent::default(), fill: &[], from: None }, 1);
     assert_eq!(p.timeline.len(), before + 1, "N contours must give one node, not a chain");
     let node = p.timeline.iter().find(|n| n.kind.body() == Some(body)).unwrap();
     match &node.kind {
@@ -37,9 +37,9 @@ fn delete_one_node_op_clean() {
     p.new_document();
     let s = square(&mut p, "s");
     // The base part: a Combine with src = 0, which makes a new body.
-    let base = p.add_combine_multi_op(0, s, vec![101], qymcad_core::model::CombineSpan { height: 10.0, down: 0.0, extent: qymcad_core::feature::Extent::default(), fill: &[] }, 1);
+    let base = p.add_combine_multi_op(0, s, vec![101], qymcad_core::model::CombineSpan { height: 10.0, down: 0.0, extent: qymcad_core::feature::Extent::default(), fill: &[], from: None }, 1);
     // A boss of three contours added to the part as a single node.
-    let op = p.add_combine_multi_op(base, s, vec![201, 202, 203], qymcad_core::model::CombineSpan { height: 5.0, down: 0.0, extent: qymcad_core::feature::Extent::default(), fill: &[] }, 1);
+    let op = p.add_combine_multi_op(base, s, vec![201, 202, 203], qymcad_core::model::CombineSpan { height: 5.0, down: 0.0, extent: qymcad_core::feature::Extent::default(), fill: &[], from: None }, 1);
     let before = p.timeline.iter().filter(|n| n.kind.body().is_some()).count();
     // Delete the operation.
     let removed = p.delete_feature_op(op);

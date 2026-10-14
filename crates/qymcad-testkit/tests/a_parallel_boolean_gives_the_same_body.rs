@@ -90,7 +90,7 @@ fn plate_with_holes(n: usize) -> Project {
     }
     p.regen_sketch(si2);
     let profiles: Vec<qymcad_core::model::Id> = p.sketches[si2].contour_ids.clone();
-    let span = qymcad_core::model::CombineSpan { height: 20.0, down: 0.0, extent: qymcad_core::feature::Extent::default(), fill: &[] };
+    let span = qymcad_core::model::CombineSpan { height: 20.0, down: 0.0, extent: qymcad_core::feature::Extent::default(), from: None, fill: &[] };
     let cut = p.add_combine_multi_op(body, sid2, profiles, span, 0);
     p.finish_base_body(cut, 1);
     p

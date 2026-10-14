@@ -18,7 +18,8 @@ fn an_upright_edge_under_the_seam_of_a_cylinder_takes_a_rounding() {
     p.add_rect_entity(si, 0.0, -10.0, 10.0, 0.0, Purpose::Real); // the quarter from the seam line (x = +5, y = 0) clockwise
     p.regen_sketch(si);
     let c: Vec<u64> = p.sketches[si].contour_ids.iter().copied().filter(|c| p.contour_profile_xy(*c).is_some()).collect();
-    let cut = p.add_combine_multi_op(cyl, sid, c, CombineSpan { height: 4.0, down: 0.0, extent: qymcad_core::feature::Extent { reach: Reach::Forward, ..Default::default() }, fill: &[] }, 0);
+    let cut =
+        p.add_combine_multi_op(cyl, sid, c, CombineSpan { height: 4.0, down: 0.0, extent: qymcad_core::feature::Extent { reach: Reach::Forward, ..Default::default() }, fill: &[], from: None }, 0);
     let (report, shapes) = qymcad_testkit::regenerate(&mut p);
     assert!(report.errors.is_empty(), "setup: the cut did not build: {:?}", report.errors);
     // the upright edge at (5, 0) from z 0 to 4, on the seam line
@@ -48,7 +49,8 @@ fn an_upright_edge_under_the_seam_of_a_cylinder_takes_a_chamfer() {
     p.add_rect_entity(si, 0.0, -10.0, 10.0, 0.0, Purpose::Real);
     p.regen_sketch(si);
     let c: Vec<u64> = p.sketches[si].contour_ids.iter().copied().filter(|c| p.contour_profile_xy(*c).is_some()).collect();
-    let cut = p.add_combine_multi_op(cyl, sid, c, CombineSpan { height: 4.0, down: 0.0, extent: qymcad_core::feature::Extent { reach: Reach::Forward, ..Default::default() }, fill: &[] }, 0);
+    let cut =
+        p.add_combine_multi_op(cyl, sid, c, CombineSpan { height: 4.0, down: 0.0, extent: qymcad_core::feature::Extent { reach: Reach::Forward, ..Default::default() }, fill: &[], from: None }, 0);
     let (_, shapes) = qymcad_testkit::regenerate(&mut p);
     let edge = p
         .regen_edges

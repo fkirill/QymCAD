@@ -247,6 +247,10 @@ pub enum FeatureKind {
         /// in the window, not by compatibility code in the core.
         #[serde(default)]
         extent: Extent,
+        /// The face the sweep starts from, parallel to the sketch plane; its place is re-read at every
+        /// rebuild, as for a stop by face. Absent means the sketch plane itself.
+        #[serde(default)]
+        from: Option<FaceRef>,
         /// Second side (against the normal) for a two-sided tool: it spans [-down, +height]. Zero means
         /// one-sided.
         #[serde(default)]
@@ -872,7 +876,22 @@ impl FeatureKind {
             FeatureKind::Sweep { sketch, path_sketch, src, .. } if src != 0 => vec![src, sketch, path_sketch],
             FeatureKind::Sweep { sketch, path_sketch, .. } => vec![sketch, path_sketch],
             FeatureKind::BodyBoolean { a, b, .. } => vec![a, b],
-            FeatureKind::Combine { src, sketch, .. } => vec![src, sketch],
+            FeatureKind::Combine { src, sketch, ref extent, ref from, .. } => {
+                let mut v = vec![src, sketch];
+                // The body a reached face lives on, when it is not the source itself: without it the tool
+                // would neither follow that body's rebuilds nor see its deletion, the same rule a mirror's
+                // face already follows.
+                let stop_body = match &extent.stop {
+                    Stop::UpToFace(f) => Some(f.body),
+                    _ => None,
+                };
+                for b in from.iter().map(|f| f.body).chain(stop_body) {
+                    if b != src && b != 0 && !v.contains(&b) {
+                        v.push(b);
+                    }
+                }
+                v
+            }
             FeatureKind::Fillet { src, .. }
             | FeatureKind::Chamfer { src, .. }
             | FeatureKind::Shell { src, .. }
@@ -918,6 +937,17 @@ impl FeatureKind {
             FeatureKind::BodyBoolean { a, b, .. } => {
                 fix(a);
                 fix(b);
+            }
+            FeatureKind::Combine { src, extent, from, .. } => {
+                fix(src);
+                // A reached face travels with its body: the reference names the body, so a restructured
+                // chain moves it too, or the face would be read off a body that no longer holds it.
+                if let Some(f) = from {
+                    fix(&mut f.body);
+                }
+                if let Stop::UpToFace(f) = &mut extent.stop {
+                    fix(&mut f.body);
+                }
             }
             FeatureKind::Combine { src, .. }
             | FeatureKind::Fillet { src, .. }

@@ -31,7 +31,7 @@ fn suppress_feature_cascades_to_dependents() {
         base,
         sid,
         0,
-        qymcad_core::model::CombineSpan { height: 4.0, down: 0.0, extent: qymcad_core::feature::Extent { reach: qymcad_core::feature::Reach::Backward, ..Default::default() }, fill: &[] },
+        qymcad_core::model::CombineSpan { height: 4.0, down: 0.0, extent: qymcad_core::feature::Extent { reach: qymcad_core::feature::Reach::Backward, ..Default::default() }, fill: &[], from: None },
         0,
     ); // Depends on the base.
     let k = MockKernel::default();

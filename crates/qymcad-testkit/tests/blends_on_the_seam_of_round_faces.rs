@@ -31,7 +31,7 @@ fn cut_at_the_seam(solid: &str, at_seam: bool) -> (Project, u64, u32) {
     }
     p.regen_sketch(si);
     let c: Vec<u64> = p.sketches[si].contour_ids.iter().copied().filter(|c| p.contour_profile_xy(*c).is_some()).collect();
-    let cut = p.add_combine_multi_op(body, sid, c, CombineSpan { height: h, down: 0.0, extent: qymcad_core::feature::Extent { reach, ..Default::default() }, fill: &[] }, 0);
+    let cut = p.add_combine_multi_op(body, sid, c, CombineSpan { height: h, down: 0.0, extent: qymcad_core::feature::Extent { reach, ..Default::default() }, fill: &[], from: None }, 0);
     let (report, _) = qymcad_testkit::regenerate(&mut p);
     assert!(report.errors.is_empty(), "{solid}: setup, the cut did not build: {:?}", report.errors);
     // the edge where the face of the cut in the plane y = 0 meets the round surface: the one farthest out

@@ -90,7 +90,7 @@ fn a_sketch_on_a_face_survives_deleting_the_feature_under_it() {
         fil,
         sid,
         vec![cid],
-        qymcad_core::model::CombineSpan { height: 4.0, down: 0.0, extent: qymcad_core::feature::Extent { reach: qymcad_core::feature::Reach::Backward, ..Default::default() }, fill: &[] },
+        qymcad_core::model::CombineSpan { height: 4.0, down: 0.0, extent: qymcad_core::feature::Extent { reach: qymcad_core::feature::Reach::Backward, ..Default::default() }, fill: &[], from: None },
         0,
     );
     let (rep, _) = qymcad_testkit::regenerate(&mut p);

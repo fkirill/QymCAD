@@ -68,7 +68,7 @@ impl Project {
 
     /// Operation on body `src` using several contours `profiles` within one node: one boolean, one body.
     pub fn add_combine_multi_op(&mut self, src: Id, sketch: Id, profiles: Vec<Id>, span: super::CombineSpan, op: u8) -> Id {
-        let super::CombineSpan { height, down, extent: ext, fill } = span;
+        let super::CombineSpan { height, down, extent: ext, from, fill } = span;
         let fill = fill.to_vec();
         use crate::feature::{FeatureKind, FeatureNode};
         let body = self.alloc_id();
@@ -77,7 +77,7 @@ impl Project {
         self.push_timeline(FeatureNode {
             id: body,
             name,
-            kind: FeatureKind::Combine { src, sketch, profiles, height, op, extent: ext, down, fill, body, pieces: Vec::new() },
+            kind: FeatureKind::Combine { src, sketch, profiles, height, op, extent: ext, from, down, fill, body, pieces: Vec::new() },
             parent,
             dirty: true,
             suppressed: false,

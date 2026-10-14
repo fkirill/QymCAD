@@ -20,7 +20,8 @@ fn pocket(x0: f64, y0: f64, x1: f64, y1: f64) -> (Project, u64) {
     p.add_rect_entity(si, x0, y0, x1, y1, Purpose::Real);
     p.regen_sketch(si);
     let c: Vec<u64> = p.sketches[si].contour_ids.iter().copied().filter(|c| p.contour_profile_xy(*c).is_some()).collect();
-    let cut = p.add_combine_multi_op(block, sid, c, CombineSpan { height: 4.0, down: 0.0, extent: qymcad_core::feature::Extent { reach: Reach::Forward, ..Default::default() }, fill: &[] }, 0);
+    let cut =
+        p.add_combine_multi_op(block, sid, c, CombineSpan { height: 4.0, down: 0.0, extent: qymcad_core::feature::Extent { reach: Reach::Forward, ..Default::default() }, fill: &[], from: None }, 0);
     let (report, _) = qymcad_testkit::regenerate(&mut p);
     assert!(report.errors.is_empty(), "setup: the pocket did not cut: {:?}", report.errors);
     (p, cut)

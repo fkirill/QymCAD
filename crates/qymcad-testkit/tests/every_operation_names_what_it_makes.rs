@@ -358,7 +358,7 @@ const ROWS: [Row; 40] = [
         build: |p| {
             let b = extruded_block(p);
             let (sid, profiles, _) = sketch_of(p, "Pocket", [p2(5.0, 5.0), p2(15.0, 15.0)], None);
-            let span = qymcad_core::model::CombineSpan { height: 5.0, down: 0.0, extent: qymcad_core::feature::Extent { reach: Reach::Forward, ..Default::default() }, fill: &[] };
+            let span = qymcad_core::model::CombineSpan { height: 5.0, down: 0.0, extent: qymcad_core::feature::Extent { reach: Reach::Forward, ..Default::default() }, fill: &[], from: None };
             p.add_combine_multi_op(b, sid, profiles, span, 0)
         },
     },

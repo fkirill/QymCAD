@@ -79,7 +79,7 @@ fn extrude_disk_then_cut_middle_ring() {
         body,
         sid,
         vec![mid],
-        qymcad_core::model::CombineSpan { height: 12.0, down: 0.0, extent: qymcad_core::feature::Extent { through: true, ..Default::default() }, fill: &[] },
+        qymcad_core::model::CombineSpan { height: 12.0, down: 0.0, extent: qymcad_core::feature::Extent { stop: qymcad_core::feature::Stop::Through, ..Default::default() }, fill: &[], from: None },
         0,
     );
     let (r2, s2) = qymcad_testkit::regenerate(&mut p);

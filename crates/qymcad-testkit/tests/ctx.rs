@@ -12,7 +12,7 @@ fn extrude_from_assembly_scopes_to_sketch_owner() {
     if let Some(o) = owner {
         p.set_active_component(Some(o));
     }
-    let body = p.add_combine_multi_op(0, 3, vec![29], qymcad_core::model::CombineSpan { height: 10.0, down: 0.0, extent: qymcad_core::feature::Extent::default(), fill: &[] }, 1);
+    let body = p.add_combine_multi_op(0, 3, vec![29], qymcad_core::model::CombineSpan { height: 10.0, down: 0.0, extent: qymcad_core::feature::Extent::default(), from: None, fill: &[] }, 1);
     let (report, shapes) = qymcad_testkit::regenerate(&mut p);
     for (id, e) in &report.errors {
         eprintln!("error {id}: {e}");

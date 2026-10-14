@@ -230,8 +230,8 @@ fn a_reversed_cut_survives_a_save_and_a_load() {
     let path = path.to_str().unwrap();
     let mut p = sample();
     // The node alone is what is being written and read; no geometry is needed to check the shape of the record.
-    let ext = Extent { through: true, reach: qymcad_core::feature::Reach::Backward };
-    let node = p.add_combine_on(0, 0, 0, qymcad_core::model::CombineSpan { height: 5.0, down: 0.0, extent: ext, fill: &[] }, 0);
+    let ext = Extent { stop: qymcad_core::feature::Stop::Through, reach: qymcad_core::feature::Reach::Backward };
+    let node = p.add_combine_on(0, 0, 0, qymcad_core::model::CombineSpan { height: 5.0, down: 0.0, extent: ext.clone(), from: None, fill: &[] }, 0);
     save_project(&p, path).expect("save ok");
 
     let back = load_project(path).expect("load ok");

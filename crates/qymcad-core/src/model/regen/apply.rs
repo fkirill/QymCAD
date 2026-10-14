@@ -2,6 +2,17 @@
 
 use super::*;
 
+    /// WHAT SIZES A TOOL BESIDES THE SKETCH: the typed lengths, the stop (through all among them) and the
+    /// place of a start face along the normal (0.0 - the sketch plane). One record, for the same reason as
+    /// every travelling group here: seven loose numbers at a call site count to no one.
+pub(crate) struct ToolSizing<'a> {
+    pub height: f64,
+    pub down: f64,
+    pub extent: &'a crate::feature::Extent,
+    pub from_face_at: f64,
+    }
+
+
 impl Project {
     pub(crate) fn live_fillet_edges(&mut self, node_id: Id, src: Id, r: &crate::refs::Ref, emap: &EdgeRenames, kernel: &dyn crate::feature::Kernel) -> Vec<u32> {
         // The two paths are told apart by the kind of query rather than by whether it contains numbers.
@@ -187,10 +198,11 @@ impl Project {
     /// Returns `(start along the normal, length)`. The target body `src` is needed so the extent knows the
     /// geometry it cuts: "through all" without a bounding box is a blind pocket, not a through cut.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn tool_extent(&self, src: Id, pl: &[f64; 12], h: f64, down: f64, extent: crate::feature::Extent, op: u8) -> crate::feature::ToolSpan {
+    pub(crate) fn tool_extent(&self, src: Id, pl: &[f64; 12], sizing: ToolSizing<'_>, op: u8) -> crate::feature::ToolSpan {
+        let ToolSizing { height: h, down, extent, from_face_at: d_from } = sizing;
         let n = [pl[2], pl[6], pl[10]];
         let o = [pl[3], pl[7], pl[11]];
-        if extent.through {
+        if extent.stop == crate::feature::Stop::Through {
             // Span the whole of body `src` along the normal, both ways: the bounding box gives a start below it
             // and a length of the span plus margins.
             let kept = |start: f64, length: f64| crate::feature::ToolSpan { start, length, ends: crate::feature::ToolEnds::Kept };
@@ -211,9 +223,11 @@ impl Project {
         // The tool direction follows the extrude rules: one-sided, both ways or two-sided. A one-sided cut has its ends
         // met with the body by the bridge (`ToolEnds::OneSidedCut`): an end coincident with a face of the body leaves a
         // cap behind, which is OCCT's to be worked round, not the model's.
+        // A start face moves the whole extent with it: the sweep runs its length from the face rather
+        // than from the plane.
         let (start, length) = crate::feature::extrude_extent(h, down, extent.reach);
         let one_sided = op == 0 && extent.reach != crate::feature::Reach::BothWays && down.abs() <= 1e-9;
-        crate::feature::ToolSpan { start, length, ends: if one_sided { crate::feature::ToolEnds::OneSidedCut } else { crate::feature::ToolEnds::Kept } }
+        crate::feature::ToolSpan { start: start + d_from, length, ends: if one_sided { crate::feature::ToolEnds::OneSidedCut } else { crate::feature::ToolEnds::Kept } }
     }
 
     pub(crate) fn apply_regen(&mut self, l: Landing, body: Id, res: Result<crate::geom::Built, crate::errors::CoreError>) -> bool {

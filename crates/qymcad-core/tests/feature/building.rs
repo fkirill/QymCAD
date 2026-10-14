@@ -112,8 +112,8 @@ fn a_one_sided_cut_is_handed_with_ends_to_meet_the_body() {
     let sid = square(&mut p, "s");
     p.add_sketch_node(sid, "s");
     let base = p.add_extrude_on(sid, 0, 5.0, qymcad_core::feature::Reach::Forward, 0.0);
-    p.add_combine_on(base, sid, 0, qymcad_core::model::CombineSpan { height: 5.0, down: 0.0, extent: qymcad_core::feature::Extent::default(), fill: &[] }, 0);
-    p.add_combine_on(base, sid, 0, qymcad_core::model::CombineSpan { height: 5.0, down: 0.0, extent: qymcad_core::feature::Extent::default(), fill: &[] }, 1);
+    p.add_combine_on(base, sid, 0, qymcad_core::model::CombineSpan { height: 5.0, down: 0.0, extent: qymcad_core::feature::Extent::default(), fill: &[], from: None }, 0);
+    p.add_combine_on(base, sid, 0, qymcad_core::model::CombineSpan { height: 5.0, down: 0.0, extent: qymcad_core::feature::Extent::default(), fill: &[], from: None }, 1);
     let k = MockKernel::default();
     p.regenerate(&k);
     let spans = k.spans.borrow().clone();

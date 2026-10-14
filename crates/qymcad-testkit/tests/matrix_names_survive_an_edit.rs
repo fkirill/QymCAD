@@ -76,7 +76,7 @@ fn post_of(p: &mut Project, src: u64, tall: f64) -> (u64, u32) {
     p.add_circle_entity(si, 20.0, 15.0, 5.0, Purpose::Real);
     p.regen_sketch(si);
     let c: Vec<u64> = p.sketches[si].contour_ids.iter().copied().filter(|c| p.contour_profile_xy(*c).is_some()).collect();
-    let span = qymcad_core::model::CombineSpan { height: tall, down: 0.0, extent: qymcad_core::feature::Extent { reach: Reach::Forward, ..Default::default() }, fill: &[] };
+    let span = qymcad_core::model::CombineSpan { height: tall, down: 0.0, extent: qymcad_core::feature::Extent { reach: Reach::Forward, ..Default::default() }, fill: &[], from: None };
     let post = p.add_combine_multi_op(src, sid, c, span, 1);
     let _ = qymcad_testkit::regenerate(p);
     let rim = p.regen_edges.get(&post).into_iter().flatten().filter(|e| e.radius > 1e-6).max_by(|a, b| a.mid[2].total_cmp(&b.mid[2])).map(|e| e.id).expect("the rim of the post");
@@ -148,7 +148,7 @@ const ROWS: [Row; 25] = [
             p.add_rect_entity(si, 5.0, 5.0, 15.0, 15.0, Purpose::Real);
             p.regen_sketch(si);
             let c: Vec<u64> = p.sketches[si].contour_ids.iter().copied().filter(|c| p.contour_profile_xy(*c).is_some()).collect();
-            let span = qymcad_core::model::CombineSpan { height: 5.0, down: 0.0, extent: qymcad_core::feature::Extent { reach: Reach::Forward, ..Default::default() }, fill: &[] };
+            let span = qymcad_core::model::CombineSpan { height: 5.0, down: 0.0, extent: qymcad_core::feature::Extent { reach: Reach::Forward, ..Default::default() }, fill: &[], from: None };
             p.add_combine_multi_op(src, sid, c, span, 0)
         },
         edge: |_| [5.0, 5.0, 2.5],
@@ -531,7 +531,7 @@ fn lay(row: &Row, with_between: bool, left: Left, reference: Reference) -> Resul
         p.add_rect_entity(si, 30.0, 20.0, 35.0, 25.0, Purpose::Real);
         p.regen_sketch(si);
         let c: Vec<u64> = p.sketches[si].contour_ids.iter().copied().filter(|c| p.contour_profile_xy(*c).is_some()).collect();
-        let span = qymcad_core::model::CombineSpan { height: 3.0, down: 0.0, extent: qymcad_core::feature::Extent { reach: Reach::Forward, ..Default::default() }, fill: &[] };
+        let span = qymcad_core::model::CombineSpan { height: 3.0, down: 0.0, extent: qymcad_core::feature::Extent { reach: Reach::Forward, ..Default::default() }, fill: &[], from: None };
         let cut = p.add_combine_multi_op(src, sid, c, span, 0);
         let _ = qymcad_testkit::regenerate(&mut p);
         between = Some(cut);
@@ -571,7 +571,7 @@ fn lay(row: &Row, with_between: bool, left: Left, reference: Reference) -> Resul
             p.add_circle_entity(si, top.at[0], top.at[1], 1.0, Purpose::Real);
             p.regen_sketch(si);
             let c: Vec<u64> = p.sketches[si].contour_ids.iter().copied().filter(|c| p.contour_profile_xy(*c).is_some()).collect();
-            let span = qymcad_core::model::CombineSpan { height: 2.0, down: 0.0, extent: qymcad_core::feature::Extent { reach: Reach::Forward, ..Default::default() }, fill: &[] };
+            let span = qymcad_core::model::CombineSpan { height: 2.0, down: 0.0, extent: qymcad_core::feature::Extent { reach: Reach::Forward, ..Default::default() }, fill: &[], from: None };
             p.add_combine_multi_op(body, sid, c, span, 1)
         }
         Reference::Mate => {

@@ -159,14 +159,60 @@ impl Project {
     /// Combine: one branch of the timeline rebuild. Returns whether the node's error record may
     /// be cleared (see `apply_regen`).
     pub(crate) fn prep_combine(&mut self, p: &mut Pass, prof: Profile, span: CombineSpan, t: BodyOp) -> crate::feature::KernelJob {
-        let CombineSpan { height, down, extent, fill } = span;
+        let CombineSpan { height, down, extent, from, fill } = span;
         let (sketch, profiles) = (prof.sketch, prof.profiles);
         let (src, op, body) = (t.src, t.op, t.body);
         let pl = self.sketch_place(sketch);
         let h0 = p.dim("height", height).abs();
         let down = p.dim("down", down);
-        // Extent of the tool along the normal: one named computation (see `tool_extent`).
-        let tool = self.tool_extent(src, &pl, h0, down, extent, op);
+        self.regen_warnings.remove(&p.node); // the faces-met note of an earlier pass does not survive a rebuild
+        // "Through all" spans everything in the way, so a start face would be ignored, not honored: the
+        // pair is refused rather than half-kept.
+        if extent.stop == crate::feature::Stop::Through && from.is_some() {
+            return crate::feature::KernelJob::refused(crate::errors::CoreError::ThroughWithStartFace);
+        }
+        // Where the sweep starts: the sketch plane, or the picked face moved onto the normal axis (see
+        // `reached_face_place`, which also refuses a lost or turned face).
+        let d_from = match &from {
+            Some(fr) => match self.reached_face_place(fr, crate::feature::FaceEnd::Start, &pl) {
+                Ok(at) => at,
+                Err(e) => return crate::feature::KernelJob::refused(e),
+            },
+            None => 0.0,
+        };
+        // Extent of the tool along the normal: one named computation (see `tool_extent`), with the stop by
+        // a face resolved here, because a face can refuse where a number cannot.
+        let tool = match &extent.stop {
+            crate::feature::Stop::UpToFace(fr) => {
+                let d_stop = match self.reached_face_place(fr, crate::feature::FaceEnd::Stop, &pl) {
+                    Ok(at) => at,
+                    Err(e) => return crate::feature::KernelJob::refused(e),
+                };
+                // The band is measured along the growth: a cut whose sketch sits on the top of the body
+                // grows against the normal, and its stop face lies on the far side of the plane - the
+                // distance runs the other way, or every such cut would come out "crossed".
+                let forward = extent.reach != crate::feature::Reach::Backward;
+                let length = if forward { d_stop - d_from } else { d_from - d_stop };
+                if length < -1e-9 {
+                    return crate::feature::KernelJob::refused(crate::errors::CoreError::ReachedFacesCrossed);
+                }
+                if length <= 1e-9 {
+                    // The faces met: the tool has no length. A zero-length prism handed to the kernel is a
+                    // degenerate answer, so the source is passed through unchanged, the node stays well, and
+                    // the note says why nothing was cut.
+                    self.regen_warnings.insert(p.node, crate::errors::CoreError::ReachedFacesMet);
+                    return crate::feature::KernelJob::new(vec![src], move |k| k.transform_body(body, src, crate::feature::PLACE_IDENTITY));
+                }
+                // A cut whose end lands on a face of the body meets it as a one-sided cut does (see
+                // `ToolEnds::OneSidedCut`); a pad ends as drawn, a union with a coincident face having no
+                // cap to leave behind. The sweep runs along the normal, so a backward growth starts at the
+                // far end of its band.
+                let start = if forward { d_from } else { d_from - length };
+                let ends = if op == 0 { crate::feature::ToolEnds::OneSidedCut } else { crate::feature::ToolEnds::Kept };
+                crate::feature::ToolSpan { start, length, ends }
+            }
+            _ => self.tool_extent(src, &pl, super::apply::ToolSizing { height: h0, down, extent: &extent, from_face_at: d_from }, op),
+        };
         // Encode every tool contour and apply them with a single boolean
         // (`combine_region_multi`).
 
@@ -180,5 +226,29 @@ impl Project {
                 })
             }
         }
+    }
+
+
+    /// WHERE A REACHED FACE STANDS along the normal of the sketch placement `pl`: the signed distance
+    /// from the plane to the face, so a face below the plane can serve as a start. The face is resolved
+    /// by its recipe against the live rebuild of its body and checked for parallelism within
+    /// [`crate::feature::REACHED_FACE_PARALLEL_TOL_DEG`]; anything else is a refusal naming the face
+    /// (`end` says which of the two it is).
+    pub(crate) fn reached_face_place(&self, fr: &crate::feature::FaceRef, end: crate::feature::FaceEnd, pl: &[f64; 12]) -> Result<f64, crate::errors::CoreError> {
+        let what = end.words("ref-what-start-face", "ref-what-stop-face");
+        let cand = self.resolve_face_ref(fr.body, &fr.face, what).map_err(|e| match e {
+            crate::refs::RefError::Lost { was, .. } => crate::errors::CoreError::ReachedFaceLost { end, was },
+            crate::refs::RefError::Ambiguous { .. } => crate::errors::CoreError::ReachedFaceLost { end, was: crate::refs::Fingerprint::default() },
+        })?;
+        let n = [pl[2], pl[6], pl[10]];
+        let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt().max(1e-12);
+        let m = cand.normal;
+        let mlen = (m[0] * m[0] + m[1] * m[1] + m[2] * m[2]).sqrt().max(1e-12);
+        let dot = (n[0] * m[0] + n[1] * m[1] + n[2] * m[2]) / (len * mlen);
+        if dot.abs() < crate::feature::REACHED_FACE_PARALLEL_TOL_DEG.to_radians().cos() {
+            return Err(crate::errors::CoreError::ReachedFaceNotParallel { end });
+        }
+        let o = [pl[3], pl[7], pl[11]];
+        Ok(((cand.centroid[0] - o[0]) * n[0] + (cand.centroid[1] - o[1]) * n[1] + (cand.centroid[2] - o[2]) * n[2]) / len)
     }
 }

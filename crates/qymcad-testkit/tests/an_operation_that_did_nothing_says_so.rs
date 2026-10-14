@@ -63,7 +63,13 @@ fn a_contour_cut_that_removed_nothing_says_so() {
         base,
         sid,
         c,
-        qymcad_core::model::CombineSpan { height: 20.0, down: 0.0, extent: qymcad_core::feature::Extent { through: true, reach: qymcad_core::feature::Reach::Backward }, fill: &[] },
+        qymcad_core::model::CombineSpan {
+            height: 20.0,
+            down: 0.0,
+            extent: qymcad_core::feature::Extent { stop: qymcad_core::feature::Stop::Through, reach: qymcad_core::feature::Reach::Backward },
+            fill: &[],
+            from: None,
+        },
         0,
     );
     qymcad_testkit::regenerate(&mut p);
@@ -102,7 +108,13 @@ fn a_real_contour_cut_still_works() {
         base,
         sid,
         c,
-        qymcad_core::model::CombineSpan { height: 20.0, down: 0.0, extent: qymcad_core::feature::Extent { through: true, reach: qymcad_core::feature::Reach::Backward }, fill: &[] },
+        qymcad_core::model::CombineSpan {
+            height: 20.0,
+            down: 0.0,
+            extent: qymcad_core::feature::Extent { stop: qymcad_core::feature::Stop::Through, reach: qymcad_core::feature::Reach::Backward },
+            fill: &[],
+            from: None,
+        },
         0,
     );
     qymcad_testkit::regenerate(&mut p);

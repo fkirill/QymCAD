@@ -163,12 +163,14 @@ pub struct ExtrudeSpan<'a> {
     pub fill: &'a [Id],
 }
 
-/// THE SAME FOR A JOIN OR A CUT, where the stop can also be "the whole way through".
-#[derive(Clone, Copy)]
+/// THE SAME FOR A JOIN OR A CUT, where the stop can also be "the whole way through" or a picked face.
+#[derive(Clone)]
 pub struct CombineSpan<'a> {
     pub height: f64,
     pub down: f64,
     pub extent: crate::feature::Extent,
+    /// The face the sweep starts from, in place of the sketch plane; `None` means the plane itself.
+    pub from: Option<crate::feature::FaceRef>,
     pub fill: &'a [Id],
 }
 

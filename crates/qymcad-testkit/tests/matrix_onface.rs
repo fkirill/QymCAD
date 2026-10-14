@@ -39,7 +39,7 @@ fn build(h: f64) -> (Project, u64, u64, u64) {
         cube,
         sid2,
         vec![cid2],
-        qymcad_core::model::CombineSpan { height: 5.0, down: 0.0, extent: qymcad_core::feature::Extent { reach: qymcad_core::feature::Reach::Backward, ..Default::default() }, fill: &[] },
+        qymcad_core::model::CombineSpan { height: 5.0, down: 0.0, extent: qymcad_core::feature::Extent { reach: qymcad_core::feature::Reach::Backward, ..Default::default() }, fill: &[], from: None },
         0,
     );
     (p, cube, cut, sid2)

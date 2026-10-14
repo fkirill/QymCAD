@@ -53,17 +53,17 @@ fn regen_combine_direction_matches_extrude() {
         base,
         sid,
         0,
-        qymcad_core::model::CombineSpan { height: 4.0, down: 0.0, extent: qymcad_core::feature::Extent { reach: qymcad_core::feature::Reach::Backward, ..Default::default() }, fill: &[] },
+        qymcad_core::model::CombineSpan { height: 4.0, down: 0.0, extent: qymcad_core::feature::Extent { reach: qymcad_core::feature::Reach::Backward, ..Default::default() }, fill: &[], from: None },
         0,
     );
     // Two-sided with down = 2 starts at -down.
-    let cut_two = p.add_combine_on(base, sid, 0, qymcad_core::model::CombineSpan { height: 4.0, down: 2.0, extent: qymcad_core::feature::Extent::default(), fill: &[] }, 0);
+    let cut_two = p.add_combine_on(base, sid, 0, qymcad_core::model::CombineSpan { height: 4.0, down: 2.0, extent: qymcad_core::feature::Extent::default(), fill: &[], from: None }, 0);
     // Symmetric starts at -h/2.
     let cut_sym = p.add_combine_on(
         base,
         sid,
         0,
-        qymcad_core::model::CombineSpan { height: 4.0, down: 0.0, extent: qymcad_core::feature::Extent { reach: qymcad_core::feature::Reach::BothWays, ..Default::default() }, fill: &[] },
+        qymcad_core::model::CombineSpan { height: 4.0, down: 0.0, extent: qymcad_core::feature::Extent { reach: qymcad_core::feature::Reach::BothWays, ..Default::default() }, fill: &[], from: None },
         0,
     );
     let k = MockKernel::default();
@@ -85,12 +85,12 @@ fn combine_direction_survives_serde() {
         base,
         sid,
         0,
-        qymcad_core::model::CombineSpan { height: 4.0, down: 2.5, extent: qymcad_core::feature::Extent { reach: qymcad_core::feature::Reach::BothWays, ..Default::default() }, fill: &[] },
+        qymcad_core::model::CombineSpan { height: 4.0, down: 2.5, extent: qymcad_core::feature::Extent { reach: qymcad_core::feature::Reach::BothWays, ..Default::default() }, fill: &[], from: None },
         0,
     );
     let ron = qymcad_core::model::to_ron(&p).unwrap();
     let back = qymcad_core::model::from_ron(&ron).unwrap();
-    let (reach, down) = back.timeline.iter().find_map(|n| if let FeatureKind::Combine { extent, down, .. } = n.kind { Some((extent.reach, down)) } else { None }).unwrap();
+    let (reach, down) = back.timeline.iter().find_map(|n| if let FeatureKind::Combine { extent, down, .. } = &n.kind { Some((extent.reach, *down)) } else { None }).unwrap();
     assert_eq!(reach, qymcad_core::feature::Reach::BothWays, "the direction of the tool must be saved");
     assert_eq!(down, 2.5, "the second side must be saved");
     let _ = cut;
