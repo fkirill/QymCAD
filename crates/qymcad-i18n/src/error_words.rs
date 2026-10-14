@@ -39,7 +39,7 @@ pub fn error_text(e: &qymcad_core::errors::CoreError) -> String {
             args.set("length", fmt1(*length));
             args.set("face", fmt1(*face));
         }
-        E::EdgesDropped { asked, dropped } => {
+        E::EdgesDropped { asked, dropped } | E::ProfilesDropped { asked, dropped } => {
             args.set("asked", *asked as i64);
             args.set("dropped", *dropped as i64);
         }
