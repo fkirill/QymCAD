@@ -182,6 +182,7 @@ extern "C" {
     ) -> *mut QymShape;
     fn qym_shape_shell_center(s: *const QymShape, t: c_double, idx: *const u32, n: usize) -> *mut QymShape;
     fn qym_shape_face_axis(s: *const QymShape, face_id: u32, origin: *mut f64, dir: *mut f64) -> i32;
+    fn qym_shape_face_is_plane(s: *const QymShape, face_id: u32) -> i32;
     fn qym_shape_face_edge_ids(s: *const QymShape, face_id: u32, out: *mut u32, cap: usize) -> usize;
     fn qym_shape_mirror(s: *const QymShape, plane: i32) -> *mut QymShape;
     fn qym_shape_mirror_plane(s: *const QymShape, origin: *const f64, normal: *const f64) -> *mut QymShape;

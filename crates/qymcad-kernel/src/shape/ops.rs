@@ -128,6 +128,14 @@ impl Shape {
     /// The axis of a cylindrical or conical face by its persistent id, as an origin and a direction in the
     /// local frame of the body. `None` means the face was not found or is not round, being a plane or a
     /// spline. This is what picking the axis of a circular pattern rests on.
+    /// Whether the face is a plane, by its persistent id. Asked exactly, of the surface type, because a
+    /// face with no axis is not thereby planar (a sphere and a torus have none either), and a mesh
+    /// coplanarity guess would drift with the tessellation. Picking a face a tool must reach rests on
+    /// this.
+    pub fn face_is_plane(&self, face_id: u32) -> bool {
+        unsafe { qym_shape_face_is_plane(self.ptr, face_id) == 1 }
+    }
+
     pub fn face_axis(&self, face_id: u32) -> Option<([f64; 3], [f64; 3])> {
         let (mut origin, mut dir) = ([0.0f64; 3], [0.0f64; 3]);
         let ok = unsafe { qym_shape_face_axis(self.ptr, face_id, origin.as_mut_ptr(), dir.as_mut_ptr()) };

@@ -486,3 +486,18 @@ fn face_axis_of_cylinder_is_z() {
     // a non-existent id gives None
     assert!(cyl.face_axis(99999).is_none(), "no such face gives None");
 }
+
+#[test]
+fn a_plane_is_asked_of_the_surface_not_of_the_mesh() {
+    // Picking a face a tool must reach asks which faces are planes. The surface type answers exactly:
+    // the lateral face of a cylinder is not a plane however flat its tessellation looks, its ends are,
+    // and a face that is not there is not one either. A face with no axis is not thereby planar - a
+    // sphere and a torus have none - which is why this is asked here and not inferred from `face_axis`.
+    use crate::Shape;
+    let cyl = Shape::cylinder_named(5.0, 20.0, [1, 2, 3]).expect("the cylinder");
+    let lateral = [1u32, 2, 3].into_iter().find(|&id| cyl.face_axis(id).is_some()).expect("the lateral face, the one with an axis");
+    assert!(!cyl.face_is_plane(lateral), "the lateral face of a cylinder is not a plane");
+    assert!([1u32, 2, 3].into_iter().filter(|&id| id != lateral).all(|id| cyl.face_is_plane(id)), "the ends of a cylinder are planes");
+    assert!(!cyl.face_is_plane(99999), "a face that is not there is not a plane");
+    assert!(!cyl.face_is_plane(0), "the zero id names no face");
+}

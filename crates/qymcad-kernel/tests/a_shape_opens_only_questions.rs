@@ -7,10 +7,10 @@
 //! names it.
 
 /// The methods of `Shape` open outside the bridge: questions that make nothing.
-const QUESTIONS: [&str; 26] = [
+const QUESTIONS: [&str; 27] = [
     "to_brep_bytes", "volume", "sliver_faces", "is_sheet", "is_empty_shape", "shell_count", "shares_geometry", "solid_count", "solids_info", "face_kinds", "is_valid", "edges", "edges_with_ids",
-    "edges_full", "edges_full_smooth", "edges_info", "smooth_edge_ids", "sharp_edge_ids", "min_round_radius", "face_axis", "face_cylinder", "face_edge_ids", "face_areas", "bbox", "bbox_diag",
-    "of_extension",
+    "edges_full", "edges_full_smooth", "edges_info", "smooth_edge_ids", "sharp_edge_ids", "min_round_radius", "face_axis", "face_is_plane", "face_cylinder", "face_edge_ids", "face_areas", "bbox",
+    "bbox_diag", "of_extension",
 ];
 
 #[test]

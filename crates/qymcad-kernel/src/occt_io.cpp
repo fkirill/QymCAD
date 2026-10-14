@@ -698,6 +698,24 @@ extern "C" int qym_shape_face_axis(const QymShape* s, uint32_t face_id, double* 
     } catch (...) { return 0; }
 }
 
+
+// Whether a face is a PLANE, by its persistent id. Picking a face a tool must reach asks this exactly: a
+// cylinder or a sphere has an axis or a centre but no plane to be parallel to the sketch, and a mesh
+// coplanarity guess would drift with the tessellation. Returns 1 for a plane, 0 otherwise (not found
+// included).
+extern "C" int qym_shape_face_is_plane(const QymShape* s, uint32_t face_id) {
+    if (!s || face_id == 0) return 0;
+    try {
+        QYM_SIGNALS;
+        for (TopExp_Explorer ex(s->shape, TopAbs_FACE); ex.More(); ex.Next()) {
+            uint32_t fid = s->fids.IsBound(ex.Current()) ? static_cast<uint32_t>(s->fids.Find(ex.Current())) : 0u;
+            if (fid != face_id) continue;
+            BRepAdaptor_Surface surf(TopoDS::Face(ex.Current()));
+            return surf.GetType() == GeomAbs_Plane ? 1 : 0;
+        }
+        return 0;
+    } catch (...) { return 0; }
+}
 // The persistent ids of the EDGES belonging to face `face_id`, for selecting all of a face's edges to fillet
 // or chamfer. Writes up to `cap` ids into `out` and returns how many. 0 means the face was not found or has no
 // edges with ids.
