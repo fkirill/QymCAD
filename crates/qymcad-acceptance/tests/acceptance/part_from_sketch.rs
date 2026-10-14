@@ -3,7 +3,7 @@
 //! The contract checks the extrusion of a first body point by point; what is here is the rest of the bullet - the
 //! operations that need a body to work on, the extent that goes right through it, and the revolve with its axis and
 //! angle. Every check reads the body it made: its volume and how far it reaches.
-use qymcad::{pos2, Key, Session};
+use qymcad::{pos2, Key, Pos2, Session};
 use qymcad_acceptance::build;
 use qymcad_acceptance::probe;
 
@@ -30,6 +30,16 @@ fn on_plane(s: &mut Session, key: &str) {
 fn finish(s: &mut Session) {
     let finish = s.word("wb-finish");
     s.press_word(&finish);
+}
+
+/// The row of the tree that begins with the word `lead`, as a position.
+fn row_of(s: &mut Session, lead: &str) -> Pos2 {
+    let canvas = s.canvas();
+    let rows: Vec<Pos2> = s.words_at().into_iter().filter(|(w, r)| r.max.x < canvas.min.x && r.min.y > canvas.min.y && w.starts_with(lead)).map(|(_, r)| r.center()).collect();
+    match rows.as_slice() {
+        [r] => *r,
+        other => panic!("the row beginning {lead:?} is not one row of the tree: {other:?}"),
+    }
 }
 
 /// Pick the sketch `name` by its row in the tree.
@@ -91,6 +101,7 @@ probe! {
         bar_word(&mut s, "cmd-flip-btn"); // into the body: upwards from the top face there is nothing to meet
         let length = s.word("f-length");
         s.fill(&length, "5").key(Key::Enter);
+        eprintln!("WORDS-AFTER-ENTER={:?}", s.words().iter().filter(|w| w.len() < 50).take(45).collect::<Vec<_>>());
         let now = body(&mut s);
         let common = 10.0 * 10.0 * 5.0;
         assert!((now.volume - common).abs() < 1.0, "what the 10 by 10 prism 5 deep and the block have in common is {common}, and the body is {}", now.volume);
@@ -425,5 +436,74 @@ probe! {
         let bodies: Vec<_> = doc.bodies.iter().filter(|b| !b.consumed && !b.sheet).collect();
         let keys: std::collections::HashSet<_> = bodies.iter().map(|b| b.part_key).collect();
         assert!(bodies.len() == 2 && keys.len() == 2, "two parts of one body each were expected: {:?}", bodies.iter().map(|b| (&b.name, b.part_key, b.volume)).collect::<Vec<_>>());
+    }
+}
+
+/// THE BLOCK SEEN FROM BELOW, so its bottom face can be clicked: a plain drag turns the model.
+fn seen_from_below(s: &mut Session) {
+    let canvas = s.canvas();
+    let mid = canvas.center();
+    s.drag(mid + qymcad::vec2(0.0, 200.0), mid - qymcad::vec2(0.0, 200.0), qymcad::PointerButton::Primary, qymcad::Modifiers::NONE);
+}
+
+probe! {
+    /// CUT TO A FACE: the extent is the picked parallel face's own place, not a typed number - a hole from
+    /// the top face down to the very bottom, however thick the block is.
+    fn a_cut_to_a_face_takes_the_face_s_own_distance() {
+        let mut s = a_block_with_a_square_on_top();
+        let before = body(&mut s).volume;
+        let extrude = s.word("tb-extrude-hint");
+        s.press_hint(&extrude);
+        bar_word(&mut s, "cmd-cut");
+        bar_word(&mut s, "cmd-up-to-face");
+        seen_from_below(&mut s);
+        let bottom = s.face_at([20.0, 15.0, 0.0]);
+        s.click(bottom);
+        s.key(Key::Enter);
+        let now = body(&mut s);
+        assert!((before - now.volume - 1000.0).abs() < 1.0, "the hole runs the whole 10 of thickness from the top face to the picked bottom face: {before} became {}", now.volume);
+        assert!(now.min[2].abs() < 1e-6 && (now.max[2] - 10.0).abs() < 1e-6, "the block is no longer whole in Z: it runs from {} to {}", now.min[2], now.max[2]);
+    }
+}
+
+probe! {
+    /// CUT TO A FACE FOLLOWS THE FACE: the block is made thicker, the bottom face moves, and the cut made
+    /// to that face follows it with no edit of its own.
+    fn a_cut_to_a_face_follows_the_face_that_moved() {
+        let mut s = a_block_with_a_square_on_top();
+        let extrude = s.word("tb-extrude-hint");
+        s.press_hint(&extrude);
+        bar_word(&mut s, "cmd-cut");
+        bar_word(&mut s, "cmd-up-to-face");
+        seen_from_below(&mut s);
+        let bottom = s.face_at([20.0, 15.0, 0.0]);
+        s.click(bottom);
+        s.key(Key::Enter);
+        // the extrusion of the block is edited from 10 to 14: the top rises, the picked bottom stays
+        let extrusion = s.word("f-extrude");
+        let row = row_of(&mut s, &extrusion);
+        s.double_click(row);
+        let length = s.word("f-length");
+        s.fill(&length, "14").key(Key::Enter);
+        let now = body(&mut s);
+        assert!((now.volume - (40.0 * 30.0 * 14.0 - 10.0 * 10.0 * 14.0)).abs() < 2.0, "the hole follows the faces from the top to the bottom of the taller block: the body is {}", now.volume);
+        assert!((now.max[2] - 14.0).abs() < 1e-6, "the block grew to 14: it reaches {}", now.max[2]);
+    }
+}
+
+probe! {
+    /// THE PICK TAKES ONLY WHAT IS PARALLEL: a side wall of the block is perpendicular to the sketch plane
+    /// and is passed over, the pick saying so.
+    fn a_perpendicular_face_is_not_taken_for_the_stop() {
+        let mut s = a_block_with_a_square_on_top();
+        let extrude = s.word("tb-extrude-hint");
+        s.press_hint(&extrude);
+        bar_word(&mut s, "cmd-cut");
+        bar_word(&mut s, "cmd-up-to-face");
+        let side = s.face_at([40.0, 15.0, 5.0]);
+        s.click(side);
+        let said = s.words().join(" ");
+        let missed = s.word("vp-miss-parallel-face");
+        assert!(said.contains(&missed), "the pick said it took nothing: on screen {said:?}");
     }
 }
