@@ -671,9 +671,11 @@ mod tests {
         // measurement (nine heights tried across the whole thickness) showed that some bodies the core cuts at
         // NO height at all - not "the plane was chosen badly" but the shape being what it is. A person backs
         // off at that point and does it another way; demanding a node from a tool the core refused in words
-        // means demanding the impossible.
-        let named_refusal = app.status == crate::i18n::tr("msg-plane-cuts-nothing");
-        if !made && named_refusal {
+        // means demanding the impossible. The same words answer a plane that divides no face of a split and a
+        // body an earlier feature of the chain has already consumed: both are limits the shape set, said in
+        // words, and a person aims the tool elsewhere.
+        let named_refusals = [crate::i18n::tr("msg-plane-cuts-nothing"), crate::i18n::tr("msg-plane-splits-nothing"), crate::i18n::tr("msg-body-consumed")];
+        if !made && named_refusals.contains(&app.status) {
             return false; // the refusal was named - the step did not happen, but the document is not broken
         }
         if !made {
