@@ -187,7 +187,8 @@ impl Project {
         let (outer_cid, hole_ids) = self.profile_faces(sketch, &[profile], fill).into_iter().next()?;
         let outer = self.contours.get(self.contour_index(outer_cid)?)?;
         let holes: Vec<&crate::geom::Contour> = hole_ids.iter().filter_map(|h| self.contour_index(*h).map(|i| &self.contours[i])).collect();
-        Some(crate::geom::encode_profile(outer, &holes))
+        let joined = crate::model::profile_holes::joined_holes(&holes);
+        Some(crate::geom::encode_profile(outer, &joined.iter().collect::<Vec<_>>()))
     }
     /// THE SOURCE OF EVERY PIECE OF EVERY SKETCH ENTITY in the contours `loops`: the entity and the number of the piece
     /// along it, each at its place in a list (counted from 1).
@@ -275,7 +276,8 @@ impl Project {
             .map(|(outer_cid, hole_ids)| {
                 let outer = self.contours.get(self.contour_index(outer_cid)?)?;
                 let holes: Vec<&crate::geom::Contour> = hole_ids.iter().filter_map(|h| self.contour_index(*h).map(|i| &self.contours[i])).collect();
-                Some(crate::geom::encode_profile_named(outer, &holes, &slot_of))
+                let joined = crate::model::profile_holes::joined_holes(&holes);
+                Some(crate::geom::encode_profile_named(outer, &joined.iter().collect::<Vec<_>>(), &slot_of))
             })
             .collect();
         Some(crate::feature::SourcedProfiles { profiles: encoded?, sources: pieces.sources })

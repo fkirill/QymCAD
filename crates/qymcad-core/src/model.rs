@@ -624,6 +624,8 @@ pub use regen::{ArrayAxis, BodyOp, ChamferShape, CombineSpan, ExtrudeSpan, HoleT
 mod tess;
 mod timeline;
 mod sketch;
+mod profile_selection;
+mod profile_holes;
 pub use sketch::{LoftEncoded, LoftSectionsEncoded};
 mod drag;
 mod round;

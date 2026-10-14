@@ -9,10 +9,8 @@ impl Project {
     /// their order. `kept` - the loops of the sketch that stay as they stood, nested with the new ones.
     pub(crate) fn replace_contours(&mut self, old: Vec<Id>, pairs: Vec<(Contour, Vec<Id>)>, kept: &[Id]) -> Vec<Id> {
         let entity_cids = old;
-        // THE REGIONS THE FEATURES NAME, before the loops give way: the full point polygon of every old
-        // contour a selection holds, not the signature summary. The cover below is computed against what
-        // each region WAS, and the slots of `Contours` are overwritten in place by the replacement.
-        let held = self.region_polygons_referenced(&entity_cids);
+        // Capture material faces and their direct holes before their contour slots are overwritten.
+        let held = self.region_selections_referenced(&entity_cids);
         // Stable contour ids: the new loops are matched against the old ones by a geometric signature
         // (closedness, centroid, area) rather than by position in the list. Positional reuse breaks
         // associativity: adding or removing a loop shifts a contour id onto a different physical loop, and an
@@ -161,118 +159,8 @@ impl Project {
         // parameters, here inside the one door every re-derivation passes through, so the document saves
         // it, the edit command re-offers it, and undo takes it back together with the edit.
         let old_ids: std::collections::HashSet<Id> = entity_cids.iter().copied().collect();
-        let cover = self.tiles_covering(&held, &standing);
-        let fresh = self.fresh_nested_regions(&new_entity_cids, &old_ids);
-        for n in &mut self.timeline {
-            n.kind.follow_the_tiles(&cover, &fresh);
-        }
+        self.adapt_region_selections(held, &standing, &old_ids, &new_entity_cids);
         new_entity_cids
-    }
-
-    /// THE REGIONS THE TIMELINE NAMES, before the loops give way (see `replace_contours`): the full point
-    /// polygon of every old contour a feature's selection holds. Only regions being replaced are captured
-    /// - a loop that stands as it stood needs no cover.
-    fn region_polygons_referenced(&self, old: &[Id]) -> Vec<(Id, Vec<Point2>)> {
-        let mut held: Vec<(Id, Vec<Point2>)> = Vec::new();
-        for n in &self.timeline {
-            let Some((profiles, fill)) = n.kind.region_selection() else { continue };
-            for cid in profiles.iter().chain(fill.into_iter().flatten()) {
-                if held.iter().any(|(id, _)| id == cid) || !old.contains(cid) {
-                    continue;
-                }
-                if let Some(pts) = self.contour_index(*cid).map(|ci| self.contours[ci].points.clone()) {
-                    held.push((*cid, pts));
-                }
-            }
-        }
-        held
-    }
-
-    /// THE COVER AND THE MERGE OF A RE-TILING: which old regions give way to which new ones. `held` - the
-    /// point polygons of the regions the timeline named, as they were before the replacement; `standing` -
-    /// the loops of the sketch after it. The answer maps an old id to the ids that replace it.
-    ///
-    /// Exactness gates both directions. The arrangement's minimal faces are pairwise interior-disjoint, so
-    /// the tiles lying inside an old region sum to the area of their union: the sum meeting the old area,
-    /// every tile inside it, IS an exact cover. Read from the other side, the same predicate is the merge:
-    /// a new region covered exactly by the old regions lying inside it takes over their references, so
-    /// deleting a dividing line collapses the selection back to the one region. A partial cover, or a
-    /// boundary genuinely moved, does not fire: the feature follows its region as it does today.
-    fn tiles_covering(&self, held: &[(Id, Vec<Point2>)], standing: &[Id]) -> std::collections::HashMap<Id, Vec<Id>> {
-        // How close the tiles' total area must come to the old region's for a cover to fire, as a fraction
-        // of the old area. The tiles come from the same tessellation machinery as the region they replace,
-        // so an exact cover agrees far inside this: measured on the rectangle cut by a line, the circle
-        // drawn inside a region, and the disc cut by its diameter line (whose halves carry arc
-        // tessellation), the widest disagreement of an exact cover was 2e-16 relative.
-        const COVER_TOL: f64 = 1e-6;
-        let mut cover = std::collections::HashMap::new();
-        if held.is_empty() {
-            return cover;
-        }
-        // the closed regions standing now - the candidate tiles - with their boxes and areas
-        let tiles: Vec<(Id, Vec<Point2>)> = standing
-            .iter()
-            .copied()
-            .filter_map(|cid| self.contour_index(cid).and_then(|ci| (self.contours[ci].closed && self.contours[ci].points.len() >= 3).then(|| (cid, self.contours[ci].points.clone()))))
-            .collect();
-        let tile_boxes: Vec<[f64; 4]> = tiles.iter().map(|(_, pts)| poly_box(pts)).collect();
-        let tile_areas: Vec<f64> = tiles.iter().map(|(_, pts)| poly_area(pts)).collect();
-        let held_boxes: Vec<[f64; 4]> = held.iter().map(|(_, pts)| poly_box(pts)).collect();
-        // THE COVER: an old region exactly met by the tiles lying inside it
-        for (k, (oid, opts)) in held.iter().enumerate() {
-            let oarea = poly_area(opts);
-            if oarea < 1e-9 {
-                continue;
-            }
-            let mut cands: Vec<usize> = (0..tiles.len()).filter(|&t| round::meet(&tile_boxes[t], &held_boxes[k])).collect();
-            cands.retain(|&t| region_inside(&tiles[t].1, opts));
-            // a hole of the old region lies inside it too, but it is no tile of the cover: the cover is
-            // the candidates nested in no other candidate
-            let nested: std::collections::HashSet<usize> = cands.iter().filter(|&&t| cands.iter().any(|&u| u != t && self.contours.parent_of(tiles[t].0) == Some(tiles[u].0))).copied().collect();
-            cands.retain(|&t| !nested.contains(&t));
-            let covered: f64 = cands.iter().map(|&t| tile_areas[t]).sum();
-            if (covered - oarea).abs() <= COVER_TOL * oarea {
-                let ids: Vec<Id> = cands.iter().map(|&t| tiles[t].0).collect();
-                if ids != vec![*oid] {
-                    cover.insert(*oid, ids);
-                }
-            }
-        }
-        // THE MERGE: a new region exactly met by the old regions lying inside it
-        for (t, (nid, npts)) in tiles.iter().enumerate() {
-            let narea = tile_areas[t];
-            let mut inside: Vec<Id> = Vec::new();
-            let mut covered = 0.0;
-            for (k, (oid, opts)) in held.iter().enumerate() {
-                if round::meet(&tile_boxes[t], &held_boxes[k]) && region_inside(opts, npts) {
-                    inside.push(*oid);
-                    covered += poly_area(opts);
-                }
-            }
-            if !inside.is_empty() && inside != vec![*nid] && (covered - narea).abs() <= COVER_TOL * narea {
-                for oid in inside {
-                    cover.insert(oid, vec![*nid]);
-                }
-            }
-        }
-        cover
-    }
-
-    /// The closed contours the edit minted, each paired with the region it nests directly inside (0 at
-    /// the root): the candidates of the fill rule, taken from the loops the edit MADE only - a loop that
-    /// stood as it stood is never fresh, however far the loops being replaced reached. Fresh ids only - a
-    /// contour that survived by its id and merely moved into the selected area keeps today's hole
-    /// semantics, which is a shape change the person can see, while geometry newly drawn inside the area
-    /// is the case the fill is for.
-    fn fresh_nested_regions(&self, made: &[Id], old: &std::collections::HashSet<Id>) -> Vec<(Id, Id)> {
-        made.iter()
-            .copied()
-            .filter(|cid| !old.contains(cid))
-            .filter_map(|cid| {
-                let ci = self.contour_index(cid)?;
-                (self.contours[ci].closed && self.contours[ci].points.len() >= 3).then(|| (cid, self.contours.parent_of(cid).unwrap_or(0)))
-            })
-            .collect()
     }
     /// The origin point (0,0, fixed) of a sketch, created lazily. Returns its id. It belongs to no entity and
     /// therefore never reaches a profile or a contour.

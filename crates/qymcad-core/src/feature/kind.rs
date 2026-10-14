@@ -2,6 +2,22 @@
 
 use super::*;
 
+pub(crate) struct RegionSelection<'a> {
+    pub profiles: &'a [Id],
+    pub fill: &'a [Id],
+}
+
+struct RegionSelectionMut<'a> {
+    profiles: &'a mut Vec<Id>,
+    fill: Option<&'a mut Vec<Id>>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct FreshRegion {
+    pub child: Id,
+    pub parent: Id,
+}
+
 /// A PIECE A CUT LEFT: a cut or an intersection that parts a body in several solids makes each solid a body of the same
 /// part. The first piece is the node's own body (the biggest solid when the pieces first appear), the others get bodies
 /// of their own. `at` is where the piece was when last built - the centre of its mass: the next build gives each stored
@@ -904,19 +920,19 @@ impl FeatureKind {
 
     /// The region lists a kind's selection holds: the profiles every covered kind names, and the filled
     /// contours where the kind keeps them beside. `None` for a kind that selects no regions.
-    pub fn region_selection(&self) -> Option<(&[Id], Option<&[Id]>)> {
+    pub(crate) fn region_selection(&self) -> Option<RegionSelection<'_>> {
         match self {
-            FeatureKind::Extrude { profiles, fill, .. } | FeatureKind::Combine { profiles, fill, .. } => Some((profiles, Some(fill))),
-            FeatureKind::Revolve { profiles, .. } | FeatureKind::Sweep { profiles, .. } => Some((profiles, None)),
+            FeatureKind::Extrude { profiles, fill, .. } | FeatureKind::Combine { profiles, fill, .. } => Some(RegionSelection { profiles, fill }),
+            FeatureKind::Revolve { profiles, .. } | FeatureKind::Sweep { profiles, .. } => Some(RegionSelection { profiles, fill: &[] }),
             _ => None,
         }
     }
 
     /// The same lists, lent for writing: one lender keeps the arms of the re-tiling walk uniform.
-    pub fn region_selection_mut(&mut self) -> Option<(&mut Vec<Id>, Option<&mut Vec<Id>>)> {
+    fn region_selection_mut(&mut self) -> Option<RegionSelectionMut<'_>> {
         match self {
-            FeatureKind::Extrude { profiles, fill, .. } | FeatureKind::Combine { profiles, fill, .. } => Some((profiles, Some(fill))),
-            FeatureKind::Revolve { profiles, .. } | FeatureKind::Sweep { profiles, .. } => Some((profiles, None)),
+            FeatureKind::Extrude { profiles, fill, .. } | FeatureKind::Combine { profiles, fill, .. } => Some(RegionSelectionMut { profiles, fill: Some(fill) }),
+            FeatureKind::Revolve { profiles, .. } | FeatureKind::Sweep { profiles, .. } => Some(RegionSelectionMut { profiles, fill: None }),
             _ => None,
         }
     }
@@ -928,9 +944,9 @@ impl FeatureKind {
     /// repeats, as the profile resolution expects. Answers whether anything was written. A loft holds
     /// one contour per section, which a covered area cannot be folded into, and it selects no region
     /// lists here.
-    pub fn follow_the_tiles(&mut self, cover: &std::collections::HashMap<Id, Vec<Id>>, fresh: &[(Id, Id)]) -> bool {
+    pub(crate) fn follow_the_tiles(&mut self, cover: &std::collections::HashMap<Id, Vec<Id>>, fresh: &[FreshRegion]) -> bool {
         let mut wrote = false;
-        if let Some((profiles, fill)) = self.region_selection_mut() {
+        if let Some(RegionSelectionMut { profiles, fill }) = self.region_selection_mut() {
             wrote = retile_list(cover, profiles);
             if let Some(f) = fill {
                 if retile_list(cover, f) {
@@ -942,17 +958,26 @@ impl FeatureKind {
             return wrote;
         }
         // A closed region the edit minted inside the selected area joins it, so new geometry there does
-        // not become a hole: into `fill` where the kind keeps one, into `profiles` otherwise. Fresh ids
-        // only - a contour that survived by its id and merely moved in keeps today's hole semantics.
-        if let Some((profiles, mut fill)) = self.region_selection_mut() {
-            let selected: std::collections::HashSet<Id> = profiles.iter().copied().chain(fill.iter().flat_map(|f| f.iter().copied())).collect();
-            for (child, parent) in fresh {
-                if *parent != 0 && selected.contains(parent) && !selected.contains(child) {
-                    if let Some(f) = &mut fill {
-                        f.push(*child);
-                    } else {
-                        profiles.push(*child);
+        // not become a hole: into `fill` where the kind keeps one, into `profiles` otherwise. Existing
+        // geometry merely moved into the area keeps its hole semantics.
+        if let Some(RegionSelectionMut { profiles, mut fill }) = self.region_selection_mut() {
+            let mut selected: std::collections::HashSet<Id> = profiles.iter().copied().chain(fill.iter().flat_map(|f| f.iter().copied())).collect();
+            let mut children: std::collections::HashMap<Id, Vec<Id>> = std::collections::HashMap::new();
+            for region in fresh.iter().filter(|region| region.parent != 0) {
+                children.entry(region.parent).or_default().push(region.child);
+            }
+            let mut pending: Vec<Id> = selected.iter().copied().collect();
+            while let Some(parent) = pending.pop() {
+                for &child in children.get(&parent).into_iter().flatten() {
+                    if !selected.insert(child) {
+                        continue;
                     }
+                    if let Some(f) = &mut fill {
+                        f.push(child);
+                    } else {
+                        profiles.push(child);
+                    }
+                    pending.push(child);
                     wrote = true;
                 }
             }
