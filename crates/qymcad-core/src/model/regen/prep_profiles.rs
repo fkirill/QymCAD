@@ -166,8 +166,8 @@ impl Project {
         let h0 = p.dim("height", height).abs();
         let down = p.dim("down", down);
         self.regen_warnings.remove(&p.node); // the faces-met note of an earlier pass does not survive a rebuild
-        // "Through all" spans everything in the way, so a start face would be ignored, not honored: the
-        // pair is refused rather than half-kept.
+                                             // "Through all" spans everything in the way, so a start face would be ignored, not honored: the
+                                             // pair is refused rather than half-kept.
         if extent.stop == crate::feature::Stop::Through && from.is_some() {
             return crate::feature::KernelJob::refused(crate::errors::CoreError::ThroughWithStartFace);
         }
@@ -227,7 +227,6 @@ impl Project {
             }
         }
     }
-
 
     /// WHERE A REACHED FACE STANDS along the normal of the sketch placement `pl`: the signed distance
     /// from the plane to the face, so a face below the plane can serve as a start. The face is resolved

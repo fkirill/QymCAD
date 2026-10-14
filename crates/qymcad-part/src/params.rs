@@ -511,7 +511,7 @@ pub fn take_reached_face(pc: &mut qymcad_ui_state::PartCtx, picked: Option<(qymc
         pc.cmd.pick_face = Some(slot); // the face was let go, so the pick stays armed for the next click
     } else {
         pc.cmd.pick_face = None; // the slot is filled; another mode can arm its own pick
-        // both slots may still be missing a face (a stop and a start taken in either order)
+                                 // both slots may still be missing a face (a stop and a start taken in either order)
         if pc.cmd.from == qymcad_ui_state::ExtentStart::Face && pc.cmd.start_face.is_none() {
             pc.cmd.pick_face = Some(qymcad_ui_state::FaceSlot::Start);
         }
@@ -539,7 +539,8 @@ pub fn split_plane_click(pc: &mut qymcad_ui_state::PartCtx, picked: Option<qymca
     match picked {
         Some(sp) => {
             pc.split.plane = (pc.split.plane != Some(sp)).then_some(sp); // the same plane again lets it go
-            let src = qymcad_ui_state::op_target_body(&qymcad_ui_state::DrawCtx { cam: pc.cam, set: pc.set, scheme: pc.scheme, project: pc.project, active_path: pc.active_path }, *pc.sel).unwrap_or(0);
+            let src =
+                qymcad_ui_state::op_target_body(&qymcad_ui_state::DrawCtx { cam: pc.cam, set: pc.set, scheme: pc.scheme, project: pc.project, active_path: pc.active_path }, *pc.sel).unwrap_or(0);
             *pc.status = match crate::apply::split_piece_count(pc, src) {
                 Some(n) if n >= 2 => qymcad_ui_state::Notice::info(qymcad_i18n::tr1("vp-cut-plane-picked", "n", &n.to_string())),
                 _ => qymcad_ui_state::Notice::refusal(qymcad_i18n::tr("vp-plane-cuts-nothing")),

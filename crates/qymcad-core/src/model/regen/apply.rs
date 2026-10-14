@@ -2,16 +2,15 @@
 
 use super::*;
 
-    /// WHAT SIZES A TOOL BESIDES THE SKETCH: the typed lengths, the stop (through all among them) and the
-    /// place of a start face along the normal (0.0 - the sketch plane). One record, for the same reason as
-    /// every travelling group here: seven loose numbers at a call site count to no one.
+/// WHAT SIZES A TOOL BESIDES THE SKETCH: the typed lengths, the stop (through all among them) and the
+/// place of a start face along the normal (0.0 - the sketch plane). One record, for the same reason as
+/// every travelling group here: seven loose numbers at a call site count to no one.
 pub(crate) struct ToolSizing<'a> {
     pub height: f64,
     pub down: f64,
     pub extent: &'a crate::feature::Extent,
     pub from_face_at: f64,
-    }
-
+}
 
 impl Project {
     pub(crate) fn live_fillet_edges(&mut self, node_id: Id, src: Id, r: &crate::refs::Ref, emap: &EdgeRenames, kernel: &dyn crate::feature::Kernel) -> Vec<u32> {

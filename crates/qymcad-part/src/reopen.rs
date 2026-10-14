@@ -78,8 +78,7 @@ pub fn start_feat_cmd_edit(pc: &mut qymcad_ui_state::PartCtx, fid: Id) {
             pc.cmd.start_face = back(from.as_ref());
             pc.cmd.from = if pc.cmd.start_face.is_some() { qymcad_ui_state::ExtentStart::Face } else { qymcad_ui_state::ExtentStart::Sketch };
             pc.cmd.pick_face = None;
-            let lost = (matches!(extent.stop, qymcad_core::feature::Stop::UpToFace(_)) && pc.cmd.stop_face.is_none())
-                || (from.is_some() && pc.cmd.start_face.is_none());
+            let lost = (matches!(extent.stop, qymcad_core::feature::Stop::UpToFace(_)) && pc.cmd.stop_face.is_none()) || (from.is_some() && pc.cmd.start_face.is_none());
             if lost {
                 // a face that no longer resolves arms its pick, says so, and stands in the 3D view where
                 // the pick can be answered - the edit starts from what is left

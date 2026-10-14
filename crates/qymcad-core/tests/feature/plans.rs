@@ -39,7 +39,8 @@ fn delete_one_node_op_clean() {
     // The base part: a Combine with src = 0, which makes a new body.
     let base = p.add_combine_multi_op(0, s, vec![101], qymcad_core::model::CombineSpan { height: 10.0, down: 0.0, extent: qymcad_core::feature::Extent::default(), fill: &[], from: None }, 1);
     // A boss of three contours added to the part as a single node.
-    let op = p.add_combine_multi_op(base, s, vec![201, 202, 203], qymcad_core::model::CombineSpan { height: 5.0, down: 0.0, extent: qymcad_core::feature::Extent::default(), fill: &[], from: None }, 1);
+    let op =
+        p.add_combine_multi_op(base, s, vec![201, 202, 203], qymcad_core::model::CombineSpan { height: 5.0, down: 0.0, extent: qymcad_core::feature::Extent::default(), fill: &[], from: None }, 1);
     let before = p.timeline.iter().filter(|n| n.kind.body().is_some()).count();
     // Delete the operation.
     let removed = p.delete_feature_op(op);

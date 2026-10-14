@@ -949,8 +949,7 @@ impl FeatureKind {
                     fix(&mut f.body);
                 }
             }
-            FeatureKind::Combine { src, .. }
-            | FeatureKind::Fillet { src, .. }
+            FeatureKind::Fillet { src, .. }
             | FeatureKind::Chamfer { src, .. }
             | FeatureKind::Shell { src, .. }
             | FeatureKind::Draft { src, .. }

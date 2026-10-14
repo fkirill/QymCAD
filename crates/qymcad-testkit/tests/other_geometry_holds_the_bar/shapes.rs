@@ -169,7 +169,13 @@ fn a_through_cut_holds_the_bar() {
         base,
         sid,
         c,
-        qymcad_core::model::CombineSpan { height: 20.0, down: 0.0, extent: qymcad_core::feature::Extent { stop: qymcad_core::feature::Stop::Through, reach: qymcad_core::feature::Reach::Backward }, from: None, fill: &[] },
+        qymcad_core::model::CombineSpan {
+            height: 20.0,
+            down: 0.0,
+            extent: qymcad_core::feature::Extent { stop: qymcad_core::feature::Stop::Through, reach: qymcad_core::feature::Reach::Backward },
+            from: None,
+            fill: &[],
+        },
         0,
     );
     qymcad_testkit::regenerate(&mut p);

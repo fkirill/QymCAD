@@ -370,14 +370,11 @@ pub fn apply_sketch_cmd(pc: &mut qymcad_ui_state::PartCtx, cmd: u8) -> Option<Id
     // no collapsing.
     if cmd == 1 {
         let part = owner_body.unwrap_or(0); // the body of the part that OWNS the sketch (0 means an empty part, so create one)
-        // THE FACES OF A FACE-DRIVEN EXTENT, as the node will hold them: the body and the recipe of the
-        // face, the fingerprint taken at the pick. Their distances are measured at every rebuild, so no
-        // number goes in here - the height is dead in these modes and stays at zero.
+                                            // THE FACES OF A FACE-DRIVEN EXTENT, as the node will hold them: the body and the recipe of the
+                                            // face, the fingerprint taken at the pick. Their distances are measured at every rebuild, so no
+                                            // number goes in here - the height is dead in these modes and stays at zero.
         let face_ref = |pick: &Option<(qymcad_core::model::Id, qymcad_core::feature::FaceKey)>| {
-            pick.as_ref().map(|(b, k)| qymcad_core::feature::FaceRef {
-                body: *b,
-                face: qymcad_core::refs::Ref::one(k.id, qymcad_core::refs::Fingerprint { centroid: k.centroid, normal: k.normal }),
-            })
+            pick.as_ref().map(|(b, k)| qymcad_core::feature::FaceRef { body: *b, face: qymcad_core::refs::Ref::one(k.id, qymcad_core::refs::Fingerprint { centroid: k.centroid, normal: k.normal }) })
         };
         let from_ref = (pc.cmd.from == qymcad_ui_state::ExtentStart::Face).then(|| face_ref(&pc.cmd.start_face)).flatten();
         let up_to = pc.cmd.extent.up_to_face();
@@ -424,7 +421,13 @@ pub fn apply_sketch_cmd(pc: &mut qymcad_ui_state::PartCtx, cmd: u8) -> Option<Id
                 3 => 2,
                 _ => 1,
             };
-            pc.project.add_combine_multi_op(part, sid, targets.clone(), qymcad_core::model::CombineSpan { height: h, down, extent: qymcad_core::feature::Extent { stop, reach }, from: from_ref, fill: &fill }, occt)
+            pc.project.add_combine_multi_op(
+                part,
+                sid,
+                targets.clone(),
+                qymcad_core::model::CombineSpan { height: h, down, extent: qymcad_core::feature::Extent { stop, reach }, from: from_ref, fill: &fill },
+                occt,
+            )
         };
         if last != 0 {
             store_cmd_exprs(pc.cmd, pc.project, last); // the dimensions (the height) go onto the node of the operation
