@@ -577,6 +577,7 @@ pub(crate) fn draw_3d(pn: &Painting, painter: &egui::Painter, rect: Rect) {
     draw_mirror_preview(pn, painter, rect);
     draw_split_preview(pn, painter, rect);
     draw_axis_picker(pn, painter, rect);
+    qymcad_render::draw_reached_face_picker(pn, painter, rect);
     draw_datum_preview(pn, painter, rect);
 
     // the work planes

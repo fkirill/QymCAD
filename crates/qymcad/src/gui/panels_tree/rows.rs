@@ -125,16 +125,27 @@ pub(crate) fn feature_row_label(project: &qymcad_core::model::Project, ti: usize
             format!("{} {}", ph::CYLINDER, crate::i18n::trn("feat-cylinder", &[("d", &crate::i18n::num(2.0 * at("r", r), 0)), ("h", &crate::i18n::num(at("h", h), 0))]))
         }
         FeatureKind::Sphere { r, .. } => format!("{} {}", ph::CIRCLE, crate::i18n::tr1("feat-sphere", "d", &crate::i18n::num(2.0 * at("r", r), 0))),
-        FeatureKind::Combine { op, height, .. } => {
+        FeatureKind::Combine { op, height, ref extent, ref from, .. } => {
             // the icon follows THE OPERATION: scissors only for a cut; a boss ADDS material (a cube);
             // an intersection has its own (everything used to be scissors, and a boss looked like a cut)
             let ic = [ph::SCISSORS, ph::CUBE, ph::INTERSECT][(op as usize).min(2)];
-            format!(
-                "{} {} h={}",
-                ic,
-                [crate::i18n::tr("bool-cut"), crate::i18n::tr("bool-boss"), crate::i18n::tr("bool-intersect-short")][(op as usize).min(2)],
-                crate::i18n::num(at("height", height), 1)
-            )
+            let kind = match op {
+                1 => crate::i18n::tr("bool-boss"),
+                2 => crate::i18n::tr("bool-intersect-short"),
+                _ => crate::i18n::tr("bool-cut"),
+            };
+            // a face-driven extent has no height of its own: the row says which faces drive it, for a
+            // number here would be dead the moment any of them moves
+            if matches!(extent.stop, qymcad_core::feature::Stop::UpToFace(_)) || from.is_some() {
+                let which = match (matches!(extent.stop, qymcad_core::feature::Stop::UpToFace(_)), from.is_some()) {
+                    (true, true) => crate::i18n::tr("feat-combine-face-to-face"),
+                    (true, false) => crate::i18n::tr("feat-combine-to-face"),
+                    _ => crate::i18n::tr("feat-combine-from-face"),
+                };
+                format!("{} {} {which}", ic, kind)
+            } else {
+                format!("{} {} h={}", ic, kind, crate::i18n::num(at("height", height), 1))
+            }
         }
         FeatureKind::Fillet { radius, ref edges, .. } => {
             format!("{} {}", ph::CIRCLE, crate::i18n::trn("feat-fillet", &[("r", &crate::i18n::num(at("radius", radius), 1)), ("which", &ref_summary(edges))]))
