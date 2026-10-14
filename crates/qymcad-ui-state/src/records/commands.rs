@@ -294,6 +294,15 @@ pub struct FeatCommand {
     pub focus: bool,
     /// the body on whose face the command's sketch sits (an associative placement)
     pub ref_body: Option<Id>,
+    /// how the sweep starts: at the sketch plane, or from a picked parallel face (`start_face`)
+    pub from: ExtentStart,
+    /// which face a click in the viewport picks next - armed by taking the mode that needs it, let go
+    /// when the face is picked or the mode is left
+    pub pick_face: Option<FaceSlot>,
+    /// the picked faces of a face-driven extent: the stop (`ExtentMode::UpToFace`) and the start; each
+    /// is the body and the key the pick took (its persistent id plus the fingerprint of the moment)
+    pub stop_face: Option<(Id, qymcad_core::feature::FaceKey)>,
+    pub start_face: Option<(Id, qymcad_core::feature::FaceKey)>,
 }
 
 impl FeatCommand {

@@ -190,6 +190,13 @@ pub fn update_feat(pc: &mut qymcad_ui_state::PartCtx, fid: Id) -> Option<Id> {
     let reach = qymcad_ui_state::cmd_reach(pc.cmd, *pc.feat);
     let down = if pc.cmd.extent.two_sided() { qymcad_ui_state::cmd_val(pc.cmd, "down").abs() } else { 0.0 };
     let through = pc.cmd.extent.through();
+    // the faces of a face-driven extent, captured before the timeline is borrowed (as every value above)
+    let reached = |pick: &Option<(qymcad_core::model::Id, qymcad_core::feature::FaceKey)>| {
+        pick.as_ref().map(|(b, k)| qymcad_core::feature::FaceRef { body: *b, face: qymcad_core::refs::Ref::one(k.id, qymcad_core::refs::Fingerprint { centroid: k.centroid, normal: k.normal }) })
+    };
+    let from_edit = (pc.cmd.from == qymcad_ui_state::ExtentStart::Face).then(|| reached(&pc.cmd.start_face)).flatten();
+    let stop_edit = if pc.cmd.extent.up_to_face() { reached(&pc.cmd.stop_face) } else { None };
+    let up_to = pc.cmd.extent.up_to_face();
     let occt = match pc.feat.op {
         1 => 1,
         3 => 2,
@@ -270,16 +277,28 @@ pub fn update_feat(pc: &mut qymcad_ui_state::PartCtx, fid: Id) -> Option<Id> {
                 *rch = reach;
                 *dn = down;
             }
-            FeatureKind::Combine { profiles: prs, height, op, extent: ext, down: dnc, fill: fl_field, .. } => {
+            FeatureKind::Combine { profiles: prs, height, op, extent: ext, down: dnc, fill: fl_field, from: from_field, .. } => {
                 if !edit_contours.is_empty() {
                     *prs = edit_contours.clone();
                     *fl_field = edit_fill.clone();
                 } else if profile != 0 {
                     *prs = vec![profile];
                 }
-                *height = h.abs(); // a positive MAGNITUDE; the direction comes from flip, symmetry or the two sides
+                // a face-driven extent has no height of its own: the number stays as it was, dead in this
+                // mode and ready again if the edit returns to a typed length
+                if !up_to {
+                    *height = h.abs(); // a positive MAGNITUDE; the direction comes from flip, symmetry or the two sides
+                }
                 *op = occt;
-                *ext = qymcad_core::feature::Extent { through, reach };
+                *ext = qymcad_core::feature::Extent {
+                    stop: match (up_to, through) {
+                        (true, _) => qymcad_core::feature::Stop::UpToFace(stop_edit.clone().expect("the ready gate held a face")),
+                        (_, true) => qymcad_core::feature::Stop::Through,
+                        (_, false) => qymcad_core::feature::Stop::Length,
+                    },
+                    reach,
+                };
+                *from_field = from_edit.clone();
                 *dnc = down;
             }
             FeatureKind::Revolve { profiles: prs, axis: ax, angle, axis_datum, axis_line: al, reach: rch, .. } => {

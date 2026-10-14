@@ -431,6 +431,14 @@ impl App {
                     let hit = crate::gui::pick::pick_body_at(&self.painting(), rect, pos).and_then(|mi| self.project.mesh_id(mi));
                     qymcad_part::take_boolean_pick(&mut self.part_ctx(), hit);
                 }
+                // THE FACE-DRIVEN EXTENT OF AN EXTRUDE OR A CUT: while a face of the extent is asked for,
+                // the click takes it - a planar face of this part parallel to the sketch plane, its stop or
+                // its start, the same face again letting it go. Above the contour pick: the pick was armed
+                // on purpose, and a click then answers the arm, not the command's older habit.
+                else if self.tools.armed.cmd_kind() == 1 && self.tools.cmd.pick_face.is_some() {
+                    let hit = qymcad_pick::pick_face_parallel_at(&self.painting(), rect, pos);
+                    qymcad_part::take_reached_face(&mut self.part_ctx(), hit);
+                }
                 // an extrusion or a revolution in hand: the click picks a contour - see `profile_click_3d`
                 else if matches!(self.tools.armed.cmd_kind(), 1 | 3) && self.tools.cmd.sketch.is_some() {
                     qymcad_part::profile_click_3d(&mut self.part_ctx(), rect, pos);
@@ -538,30 +546,13 @@ impl App {
                         self.status = Notice::refusal(crate::i18n::tr("vp-miss-plane"));
                     }
                 } else if self.tools.armed.cmd_kind() == 16 {
-                    // MIRROR: the click picks the mirror PLANE, datum or face (Enter applies it)
-                    match crate::gui::pick::pick_sketch_plane_at(&self.painting(), rect, pos) {
-                        Some(sp) => {
-                            self.params.mirror.plane = (self.params.mirror.plane != Some(sp)).then_some(sp); // the same plane again lets it go
-                            self.status = Notice::info(crate::i18n::tr(if self.params.mirror.plane.is_some() { "vp-mirror-plane-picked" } else { "msg-mirror-pick" }));
-                        }
-                        None => self.status = Notice::refusal(crate::i18n::tr("vp-miss-plane-short")),
-                    }
+                    // MIRROR: the click picks the mirror PLANE, datum or face (see `mirror_plane_click`)
+                    let sp = crate::gui::pick::pick_sketch_plane_at(&self.painting(), rect, pos);
+                    qymcad_part::mirror_plane_click(&mut self.part_ctx(), sp);
                 } else if self.tools.armed.cmd_kind() == 27 || self.tools.armed.cmd_kind() == 29 {
-                    // SPLIT BODY: the click picks the cutting PLANE, datum or face (Enter applies it)
-                    match crate::gui::pick::pick_sketch_plane_at(&self.painting(), rect, pos) {
-                        Some(sp) => {
-                            self.params.split.plane = (self.params.split.plane != Some(sp)).then_some(sp); // the same plane again lets it go
-                            let src = qymcad_ui_state::op_target_body(&self.draw_ctx(), self.chosen.sel).unwrap_or(0);
-                            self.status = match crate::gui::commands::split_piece_count(&mut self.part_ctx(), src) {
-                                // how many pieces will come out is visible AT ONCE: otherwise "it cuts
-                                // nothing" would only be learnt on Enter, after a click and an offset
-                                // had already been spent
-                                Some(n) if n >= 2 => Notice::info(crate::i18n::tr1("vp-cut-plane-picked", "n", &n.to_string())),
-                                _ => Notice::refusal(crate::i18n::tr("vp-plane-cuts-nothing")),
-                            };
-                        }
-                        None => self.status = Notice::refusal(crate::i18n::tr("vp-miss-plane-short")),
-                    }
+                    // SPLIT BODY: the click picks the cutting PLANE, datum or face (see `split_plane_click`)
+                    let sp = crate::gui::pick::pick_sketch_plane_at(&self.painting(), rect, pos);
+                    qymcad_part::split_plane_click(&mut self.part_ctx(), sp);
                 } else if self.tools.armed.cmd_kind() == 20 {
                     // DATUM PLANE: the click picks the base plane, datum or face the offset is measured from
                     match crate::gui::pick::pick_sketch_plane_at(&self.painting(), rect, pos) {

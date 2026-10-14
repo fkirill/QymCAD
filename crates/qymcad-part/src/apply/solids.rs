@@ -370,7 +370,33 @@ pub fn apply_sketch_cmd(pc: &mut qymcad_ui_state::PartCtx, cmd: u8) -> Option<Id
     // no collapsing.
     if cmd == 1 {
         let part = owner_body.unwrap_or(0); // the body of the part that OWNS the sketch (0 means an empty part, so create one)
-        let h = qymcad_ui_state::cmd_val(pc.cmd, "height").abs();
+        // THE FACES OF A FACE-DRIVEN EXTENT, as the node will hold them: the body and the recipe of the
+        // face, the fingerprint taken at the pick. Their distances are measured at every rebuild, so no
+        // number goes in here - the height is dead in these modes and stays at zero.
+        let face_ref = |pick: &Option<(qymcad_core::model::Id, qymcad_core::feature::FaceKey)>| {
+            pick.as_ref().map(|(b, k)| qymcad_core::feature::FaceRef {
+                body: *b,
+                face: qymcad_core::refs::Ref::one(k.id, qymcad_core::refs::Fingerprint { centroid: k.centroid, normal: k.normal }),
+            })
+        };
+        let from_ref = (pc.cmd.from == qymcad_ui_state::ExtentStart::Face).then(|| face_ref(&pc.cmd.start_face)).flatten();
+        let up_to = pc.cmd.extent.up_to_face();
+        if (up_to && pc.cmd.stop_face.is_none()) || (pc.cmd.from == qymcad_ui_state::ExtentStart::Face && pc.cmd.start_face.is_none()) {
+            // the ready gate holds Enter back; a face mode without its face still refuses here rather than
+            // write a node whose rebuild would cut blind
+            *pc.status = Notice::refusal(qymcad_i18n::tr("msg-face-mode-needs-face"));
+            return None;
+        }
+        if part == 0 && (up_to || from_ref.is_some()) {
+            *pc.status = Notice::refusal(qymcad_i18n::tr("cmd-cut-needs-body"));
+            return None;
+        }
+        let stop = match (up_to, pc.cmd.extent.through()) {
+            (true, _) => qymcad_core::feature::Stop::UpToFace(face_ref(&pc.cmd.stop_face).expect("the ready gate held a face")),
+            (_, true) => qymcad_core::feature::Stop::Through,
+            (_, false) => qymcad_core::feature::Stop::Length,
+        };
+        let h = if up_to { 0.0 } else { qymcad_ui_state::cmd_val(pc.cmd, "height").abs() };
         // console diagnostics ON REQUEST (`QYM_EXTRUDE_DEBUG=1`), as with the contour analysis. It used to
         // print unconditionally, and an ordinary session poured a line into stderr on every extrude.
         if std::env::var("QYM_EXTRUDE_DEBUG").is_ok() {
@@ -398,7 +424,7 @@ pub fn apply_sketch_cmd(pc: &mut qymcad_ui_state::PartCtx, cmd: u8) -> Option<Id
                 3 => 2,
                 _ => 1,
             };
-            pc.project.add_combine_multi_op(part, sid, targets.clone(), qymcad_core::model::CombineSpan { height: h, down, extent: qymcad_core::feature::Extent { through, reach }, fill: &fill }, occt)
+            pc.project.add_combine_multi_op(part, sid, targets.clone(), qymcad_core::model::CombineSpan { height: h, down, extent: qymcad_core::feature::Extent { stop, reach }, from: from_ref, fill: &fill }, occt)
         };
         if last != 0 {
             store_cmd_exprs(pc.cmd, pc.project, last); // the dimensions (the height) go onto the node of the operation

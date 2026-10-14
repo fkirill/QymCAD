@@ -276,6 +276,21 @@ pub const BLOCK_INDEX_CAP: usize = 1 << 24;
 
 /// The extent of an extrude or a cut (in place of the magic numbers 0 to 3). The discriminants are kept as the
 /// former u8 in case of outside places, but the comparisons go by variant.
+/// HOW THE SWEEP OF AN EXTRUDE OR A CUT STARTS: at the sketch plane, or at a picked face parallel to it.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExtentStart {
+    #[default]
+    Sketch,
+    Face,
+}
+
+/// WHICH FACE OF A FACE-DRIVEN EXTENT a click in the viewport picks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FaceSlot {
+    Stop,
+    Start,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum ExtentMode {
     #[default]
@@ -283,6 +298,7 @@ pub enum ExtentMode {
     Symmetric,
     TwoSided, // two sides (the "down" field is active)
     Through,  // through all (operations on a body only)
+    UpToFace, // to a picked face parallel to the sketch plane (operations on a body only)
 }
 
 impl ExtentMode {
@@ -294,6 +310,9 @@ impl ExtentMode {
     }
     pub fn through(self) -> bool {
         matches!(self, ExtentMode::Through)
+    }
+    pub fn up_to_face(self) -> bool {
+        matches!(self, ExtentMode::UpToFace)
     }
     /// Restore the mode from a saved feature's flags (through takes priority, then symmetry, then two-sided).
     pub fn from_extent(reach: qymcad_core::feature::Reach, down: f64, through: bool) -> Self {

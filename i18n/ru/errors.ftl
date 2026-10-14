@@ -187,6 +187,13 @@ error-body-only-in-part = Тело можно строить только вну
 error-cross-component-input = Кросс-компонентная ссылка запрещена: вход { $input } принадлежит другому компоненту
 error-sketch-on-foreign-face = Эскиз входа { $input } посажен на грань тела другого компонента без внешней ссылки
 error-sketch-face-ref-lost = Опорная грань эскиза на теле { $body } не найдена по имени после пересборки — взят ближайший матч, проверьте посадку фичи
+error-start-face-lost = The start face of the operation was not found after the rebuild - it is gone or renamed; select it again in the edit
+error-start-face-not-parallel = The start face of the operation is no longer parallel to its sketch plane
+error-stop-face-lost = The end face of the operation was not found after the rebuild - it is gone or renamed; select it again in the edit
+error-stop-face-not-parallel = The end face of the operation is no longer parallel to its sketch plane
+error-reached-faces-crossed = The end face of the operation now stands behind its start face - move one of them or pick another pair
+error-through-with-start-face = "Through all" cannot start from a face - let the start face go or choose another extent
+error-reached-faces-met = The start and end faces met, so this operation changed nothing
 
 ## Пустые результаты
 

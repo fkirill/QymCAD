@@ -37,7 +37,7 @@ pub fn start_feat_cmd_edit(pc: &mut qymcad_ui_state::PartCtx, fid: Id) {
             }
             pc.cmd.params = vec![cmd_param_from(&*pc.project, fid, "f-length", "height", height, 0.1, 10000.0)];
         }
-        FeatureKind::Combine { sketch, ref profiles, height, op, extent, down, ref fill, .. } => {
+        FeatureKind::Combine { sketch, ref profiles, height, op, extent, down, ref fill, ref from, .. } => {
             pc.cmd.open(pc.armed, 1, was_3d);
             pc.feat.op = match op {
                 1 => 1,
@@ -56,13 +56,43 @@ pub fn start_feat_cmd_edit(pc: &mut qymcad_ui_state::PartCtx, fid: Id) {
             for &f in fill {
                 pc.gsel.profiles.insert(f); // the filled inner ones are picked too
             }
-            // restore the extent mode: through, symmetric, two-sided or to a length
-            pc.cmd.extent = qymcad_ui_state::ExtentMode::from_extent(extent.reach, down, extent.through);
+            // restore the extent mode: through, to a face, symmetric, two-sided or to a length
+            pc.cmd.extent = match extent.stop {
+                qymcad_core::feature::Stop::Through => qymcad_ui_state::ExtentMode::Through,
+                qymcad_core::feature::Stop::UpToFace(_) => qymcad_ui_state::ExtentMode::UpToFace,
+                qymcad_core::feature::Stop::Length => qymcad_ui_state::ExtentMode::from_extent(extent.reach, down, false),
+            };
+            // THE FACES BACK INTO THE COMMAND, resolved against the live rebuild: a face that resolves is
+            // picked with its key, one that does not opens with nothing and the pick waits, as a rounding
+            // waits for its edges. The key keeps the fingerprint the node holds, so the pick says where
+            // the face was even while it is lost.
+            let back = |pick: Option<&qymcad_core::feature::FaceRef>| -> Option<(qymcad_core::model::Id, qymcad_core::feature::FaceKey)> {
+                let fr = pick?;
+                let found = pc.project.resolve_face_refs(fr.body, &fr.face, "ref-what-reached-face").ok()?.first().copied()?;
+                Some((fr.body, qymcad_core::feature::FaceKey { index: 0, centroid: fr.face.hint.centroid, normal: fr.face.hint.normal, id: found }))
+            };
+            pc.cmd.stop_face = match &extent.stop {
+                qymcad_core::feature::Stop::UpToFace(fr) => back(Some(fr)),
+                _ => None,
+            };
+            pc.cmd.start_face = back(from.as_ref());
+            pc.cmd.from = if pc.cmd.start_face.is_some() { qymcad_ui_state::ExtentStart::Face } else { qymcad_ui_state::ExtentStart::Sketch };
+            pc.cmd.pick_face = None;
+            let lost = (matches!(extent.stop, qymcad_core::feature::Stop::UpToFace(_)) && pc.cmd.stop_face.is_none())
+                || (from.is_some() && pc.cmd.start_face.is_none());
+            if lost {
+                // a face that no longer resolves arms its pick, says so, and stands in the 3D view where
+                // the pick can be answered - the edit starts from what is left
+                pc.cmd.pick_face = Some(qymcad_ui_state::FaceSlot::Stop);
+                *pc.mode_3d = true;
+                *pc.status = Notice::refusal(qymcad_i18n::tr("msg-reached-face-lost"));
+            }
             if down.abs() > 1e-9 {
                 pc.cmd.down = down;
             }
-            // `sync_dir_cmd_params` adds the second-side field at the geometry, with the stored expression
-            pc.cmd.params = vec![cmd_param_from(&*pc.project, fid, "f-depth", "height", height.abs(), 0.1, 10000.0)];
+            // `sync_dir_cmd_params` adds the second-side field at the geometry, with the stored expression.
+            // A face-driven extent has no height to type, so it opens with no field at all.
+            pc.cmd.params = if pc.cmd.extent.up_to_face() { Vec::new() } else { vec![cmd_param_from(&*pc.project, fid, "f-depth", "height", height.abs(), 0.1, 10000.0)] };
         }
         FeatureKind::Revolve { sketch, ref profiles, axis, angle, axis_datum, axis_line, reach, op, .. } => {
             pc.cmd.open(pc.armed, 3, was_3d);

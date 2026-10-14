@@ -489,6 +489,66 @@ pub fn restore_bar_counts(bar_exprs: &mut std::collections::HashMap<&'static str
     }
 }
 
+/// TAKE THE FACE THE FACE-DRIVEN EXTENT CLICKED: the slot the command is picking (the stop of the sweep
+/// or its start), the same face again letting it go. The pick keeps the whole key - the persistent id
+/// plus the fingerprint of the moment - which is what goes into the node at apply.
+pub fn take_reached_face(pc: &mut qymcad_ui_state::PartCtx, picked: Option<(qymcad_core::model::Id, qymcad_core::feature::FaceKey)>) {
+    let Some((body, key)) = picked else {
+        *pc.status = qymcad_ui_state::Notice::refusal(qymcad_i18n::tr("vp-miss-parallel-face"));
+        return;
+    };
+    let Some(slot) = pc.cmd.pick_face else { return };
+    let slot_of = |face: &mut Option<(qymcad_core::model::Id, qymcad_core::feature::FaceKey)>, next: (qymcad_core::model::Id, qymcad_core::feature::FaceKey)| {
+        // the same face again lets it go, as every pick of a plane or an axis does
+        *face = (*face != Some(next)).then_some(next);
+        face.is_some()
+    };
+    let held = match slot {
+        qymcad_ui_state::FaceSlot::Stop => slot_of(&mut pc.cmd.stop_face, (body, key)),
+        qymcad_ui_state::FaceSlot::Start => slot_of(&mut pc.cmd.start_face, (body, key)),
+    };
+    if !held {
+        pc.cmd.pick_face = Some(slot); // the face was let go, so the pick stays armed for the next click
+    } else {
+        pc.cmd.pick_face = None; // the slot is filled; another mode can arm its own pick
+        // both slots may still be missing a face (a stop and a start taken in either order)
+        if pc.cmd.from == qymcad_ui_state::ExtentStart::Face && pc.cmd.start_face.is_none() {
+            pc.cmd.pick_face = Some(qymcad_ui_state::FaceSlot::Start);
+        }
+    }
+    *pc.status = qymcad_ui_state::Notice::info(qymcad_i18n::tr(if held { "vp-reached-face-taken" } else { "vp-reached-face-released" }));
+}
+
+/// THE MIRROR PLANE CLICK: the plane, datum or face under the click becomes the mirror plane (Enter
+/// applies it), the same plane again letting it go.
+pub fn mirror_plane_click(pc: &mut qymcad_ui_state::PartCtx, picked: Option<qymcad_core::feature::SketchPlane>) {
+    match picked {
+        Some(sp) => {
+            pc.mirror.plane = (pc.mirror.plane != Some(sp)).then_some(sp); // the same plane again lets it go
+            *pc.status = qymcad_ui_state::Notice::info(qymcad_i18n::tr(if pc.mirror.plane.is_some() { "vp-mirror-plane-picked" } else { "msg-mirror-pick" }));
+        }
+        None => *pc.status = qymcad_ui_state::Notice::refusal(qymcad_i18n::tr("vp-miss-plane-short")),
+    }
+}
+
+/// THE SPLIT PLANE CLICK: the plane, datum or face under the click becomes the cutting plane of a split
+/// (Enter applies it), the same plane again letting it go, and how many pieces will come out is said at
+/// once - otherwise "it cuts nothing" would only be learnt on Enter, after a click and an offset had
+/// already been spent.
+pub fn split_plane_click(pc: &mut qymcad_ui_state::PartCtx, picked: Option<qymcad_core::feature::SketchPlane>) {
+    match picked {
+        Some(sp) => {
+            pc.split.plane = (pc.split.plane != Some(sp)).then_some(sp); // the same plane again lets it go
+            let src = qymcad_ui_state::op_target_body(&qymcad_ui_state::DrawCtx { cam: pc.cam, set: pc.set, scheme: pc.scheme, project: pc.project, active_path: pc.active_path }, *pc.sel).unwrap_or(0);
+            *pc.status = match crate::apply::split_piece_count(pc, src) {
+                Some(n) if n >= 2 => qymcad_ui_state::Notice::info(qymcad_i18n::tr1("vp-cut-plane-picked", "n", &n.to_string())),
+                _ => qymcad_ui_state::Notice::refusal(qymcad_i18n::tr("vp-plane-cuts-nothing")),
+            };
+        }
+        None => *pc.status = qymcad_ui_state::Notice::refusal(qymcad_i18n::tr("vp-miss-plane-short")),
+    }
+}
+
 /// Whether the command is ready to apply (the required selection exists) - for highlighting the button
 /// and the field.
 pub fn cmd_ready(pc: &mut qymcad_ui_state::PartCtx) -> bool {
@@ -497,11 +557,21 @@ pub fn cmd_ready(pc: &mut qymcad_ui_state::PartCtx) -> bool {
     if pc.cmd.edit.is_some() && matches!(pc.armed.cmd_kind(), 4 | 5) {
         return !pc.gsel.edges.is_empty();
     }
+    // AN EDITED FACE-DRIVEN EXTENT WAITS FOR ITS FACES, as a rounding waits for its edges: a face that no
+    // longer resolves opens with nothing picked, and Enter with nothing would cut blind or round everything
+    if pc.cmd.edit.is_some() && pc.armed.cmd_kind() == 1 && (pc.cmd.extent.up_to_face() || pc.cmd.from == qymcad_ui_state::ExtentStart::Face) {
+        let stop = !pc.cmd.extent.up_to_face() || pc.cmd.stop_face.is_some();
+        let start = pc.cmd.from != qymcad_ui_state::ExtentStart::Face || pc.cmd.start_face.is_some();
+        return stop && start;
+    }
     if pc.cmd.edit.is_some() {
         return true; // editing an existing feature - the input is already valid
     }
     match pc.armed.cmd_kind() {
-        1 | 3 => !pc.gsel.profiles.is_empty() || pc.cmd.sketch.map(|si| qymcad_ui_state::sketch_closed_contours(pc.project, si).len() == 1).unwrap_or(false),
+        1 | 3 => {
+            let faces = (!pc.cmd.extent.up_to_face() || pc.cmd.stop_face.is_some()) && (pc.cmd.from != qymcad_ui_state::ExtentStart::Face || pc.cmd.start_face.is_some());
+            faces && (!pc.gsel.profiles.is_empty() || pc.cmd.sketch.map(|si| qymcad_ui_state::sketch_closed_contours(pc.project, si).len() == 1).unwrap_or(false))
+        }
         8 => pc.sweep.prof_sid != 0 && pc.sweep.path_sid != 0, // sweep: a profile and a path
         9 => pc.loft.sids.len() >= 2,                          // loft: at least two sections
         // a fillet and a chamfer round the edges PICKED: Enter with none picked used to round every edge of the body

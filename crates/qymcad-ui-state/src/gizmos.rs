@@ -524,8 +524,30 @@ impl CmdArrow {
 /// normal), and with two sides a second arrow the other way, driving the second value. Reported behaviour: after a
 /// flip the arrow could not be grabbed - it was drawn turned and grabbed where it stood before the flip - and two
 /// sides showed no second arrow.
+/// THE PLACE OF A REACHED FACE along the normal of the command's sketch: the signed distance from the
+/// plane to the face, read off the live rebuild. `None` when the sketch or the face is not there - the
+/// preview then draws what it can and the apply says the rest. This is what the command shows while it is
+/// in hand; the rebuild measures the same way in the core.
+pub fn reached_face_place(project: &Project, cmd: &FeatCommand, face: Option<(Id, qymcad_core::feature::FaceKey)>) -> Option<f64> {
+    let si = cmd.sketch?;
+    let (body, key) = face?;
+    let frame = project.sketch_frame(si)?;
+    let n = frame.normal();
+    let c = project.face_pool(body).into_iter().find(|c| c.desc == key.id)?;
+    let o = frame.origin;
+    Some((c.centroid[0] - o[0]) * n[0] + (c.centroid[1] - o[1]) * n[1] + (c.centroid[2] - o[2]) * n[2])
+}
+
 pub fn feat_cmd_arrows(cmd: &FeatCommand, gsel: &GeomSelection, project: &Project, flip: bool) -> Vec<CmdArrow> {
+    // THE LENGTH ARROW IS OFF WHEN A FACE SETS THE STOP: the face drives the extent, and an arrow a
+    // drag of which could not change the result would only invite the drag.
+    if cmd.extent.up_to_face() {
+        return Vec::new();
+    }
     let Some((base, n, h)) = feat_cmd_axis(cmd, gsel, project) else { return Vec::new() };
+    // a start face moves the whole extent with it: the arrows stand at the face, where the sweep begins
+    let d_from = reached_face_place(project, cmd, cmd.start_face).unwrap_or(0.0);
+    let base = [base[0] + n[0] * d_from, base[1] + n[1] * d_from, base[2] + n[2] * d_from];
     let dir = if flip { [-n[0], -n[1], -n[2]] } else { n };
     let mut out = vec![CmdArrow { base, dir, len: h, key: "height" }];
     if cmd.extent.two_sided() {

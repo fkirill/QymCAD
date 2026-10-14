@@ -187,6 +187,13 @@ error-body-only-in-part = A body can only be built inside a Part (an Assembly do
 error-cross-component-input = Cross-component reference is not allowed: input { $input } belongs to another component
 error-sketch-on-foreign-face = Sketch input { $input } sits on a face of another component's body without an external reference
 error-sketch-face-ref-lost = The sketch face reference on body { $body } was not found by name after the rebuild — the closest match was used, so check where the feature landed
+error-start-face-lost = The start face of the operation was not found after the rebuild - it is gone or renamed; select it again in the edit
+error-start-face-not-parallel = The start face of the operation is no longer parallel to its sketch plane
+error-stop-face-lost = The end face of the operation was not found after the rebuild - it is gone or renamed; select it again in the edit
+error-stop-face-not-parallel = The end face of the operation is no longer parallel to its sketch plane
+error-reached-faces-crossed = The end face of the operation now stands behind its start face - move one of them or pick another pair
+error-through-with-start-face = "Through all" cannot start from a face - let the start face go or choose another extent
+error-reached-faces-met = The start and end faces met, so this operation changed nothing
 
 ## Results that are empty
 

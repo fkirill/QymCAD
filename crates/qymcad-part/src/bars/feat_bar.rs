@@ -64,13 +64,39 @@ pub fn feat_command_bar(pc: &mut qymcad_ui_state::PartCtx, ui: &mut egui::Ui) {
                     ui.selectable_value(&mut pc.feat.op, 3u8, qymcad_i18n::tr("cmd-intersect"));
                     ui.separator();
                     ui.label(qymcad_i18n::tr("cmd-extent"));
+                    let extent_was = pc.cmd.extent;
                     ui.selectable_value(&mut pc.cmd.extent, qymcad_ui_state::ExtentMode::Length, qymcad_i18n::tr("cmd-to-length"));
                     ui.selectable_value(&mut pc.cmd.extent, qymcad_ui_state::ExtentMode::Symmetric, qymcad_i18n::tr("cmd-symmetric"));
                     ui.selectable_value(&mut pc.cmd.extent, qymcad_ui_state::ExtentMode::TwoSided, qymcad_i18n::tr("cmd-two-sides"));
                     if pc.feat.op != 0 {
                         ui.selectable_value(&mut pc.cmd.extent, qymcad_ui_state::ExtentMode::Through, qymcad_i18n::tr("cmd-through-all"));
-                    } else if pc.cmd.extent.through() {
-                        pc.cmd.extent = qymcad_ui_state::ExtentMode::Length; // "through all" only applies to operations on a body
+                        ui.selectable_value(&mut pc.cmd.extent, qymcad_ui_state::ExtentMode::UpToFace, qymcad_i18n::tr("cmd-up-to-face"));
+                    } else if pc.cmd.extent.through() || pc.cmd.extent.up_to_face() {
+                        pc.cmd.extent = qymcad_ui_state::ExtentMode::Length; // "through all" and "to a face" only apply to operations on a body
+                    }
+                    // "through all" spans everything in the way, so it takes no start face: switching to it
+                    // lets the face go rather than carry a half-honored setting
+                    if pc.cmd.extent == qymcad_ui_state::ExtentMode::Through && pc.cmd.from == qymcad_ui_state::ExtentStart::Face {
+                        pc.cmd.from = qymcad_ui_state::ExtentStart::Sketch;
+                        pc.cmd.start_face = None;
+                        pc.cmd.pick_face = None;
+                    }
+                    // taking the to-face stop with no face in hand arms its pick at once, and LEAVES THE
+                    // FLAT VIEW: the pick lives in the 3D viewport, where the body can be turned to reach
+                    // a face on its far side. Staying on the flat sheet, the button looked dead - the
+                    // click had nowhere to land.
+                    if pc.cmd.extent == qymcad_ui_state::ExtentMode::UpToFace && extent_was != qymcad_ui_state::ExtentMode::UpToFace && pc.cmd.stop_face.is_none() {
+                        pc.cmd.pick_face = Some(qymcad_ui_state::FaceSlot::Stop);
+                        *pc.mode_3d = true;
+                    }
+                    // the height field belongs to the typed length: a face-driven extent has no number to
+                    // type, and a dead field at the geometry would look alive
+                    if pc.cmd.extent.up_to_face() != extent_was.up_to_face() {
+                        if pc.cmd.extent.up_to_face() {
+                            pc.cmd.params.clear();
+                        } else {
+                            pc.cmd.params = vec![qymcad_ui_state::CmdParam::new("f-length", "height", 5.0, 0.1, 10000.0)];
+                        }
                     }
                     if pc.cmd.extent.two_sided() {
                         // the second side's distance is an expression field at the geometry (a popup), not here
@@ -89,6 +115,24 @@ pub fn feat_command_bar(pc: &mut qymcad_ui_state::PartCtx, ui: &mut egui::Ui) {
                     if ui.selectable_label(pc.feat.flip, format!("{} {}", ph::ARROWS_DOWN_UP, qymcad_i18n::tr("cmd-flip-btn"))).on_hover_text(qymcad_i18n::tr("cmd-reverse-hint")).clicked() {
                         let f = !pc.feat.flip;
                         pc.feat.set_flip(f); // the direction was set by hand
+                    }
+                    // THE START OF THE SWEEP: the sketch plane, or a picked parallel face (the distance is
+                    // measured from the plane either way, so the plane may sit anywhere). After the
+                    // direction: the direction decides which way the length runs, the start only where
+                    // from.
+                    let from_was = pc.cmd.from;
+                    ui.separator();
+                    ui.label(qymcad_i18n::tr("cmd-start"));
+                    ui.selectable_value(&mut pc.cmd.from, qymcad_ui_state::ExtentStart::Sketch, qymcad_i18n::tr("cmd-from-sketch"));
+                    if pc.cmd.extent != qymcad_ui_state::ExtentMode::Through {
+                        ui.selectable_value(&mut pc.cmd.from, qymcad_ui_state::ExtentStart::Face, qymcad_i18n::tr("cmd-from-face"));
+                    }
+                    if pc.cmd.from == qymcad_ui_state::ExtentStart::Face && from_was != qymcad_ui_state::ExtentStart::Face && pc.cmd.start_face.is_none() {
+                        pc.cmd.pick_face = Some(qymcad_ui_state::FaceSlot::Start);
+                        *pc.mode_3d = true; // the same leave-the-flat-view as the stop face
+                    }
+                    if let Some(slot) = pc.cmd.pick_face {
+                        says.tell(qymcad_i18n::tr(if slot == qymcad_ui_state::FaceSlot::Stop { "msg-pick-stop-face" } else { "msg-pick-start-face" }));
                     }
                 }
                 35 => {
