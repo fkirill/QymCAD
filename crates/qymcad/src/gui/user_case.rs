@@ -567,6 +567,34 @@ mod tests {
             problems.push(format!("[a cut from the sketch on the face] the volume did not decrease: it was {v_before_cut:.1}, it is {after_cut:.1} - the cut did not cut through"));
         }
 
+        // --- A CUT TO A FACE: a small circle on the base plane cut up to the floor's inner face, its stop
+        // set by that face rather than a typed number - the extent is the face's own place, and it follows
+        // the face ---
+        crate::gui::io_jobs::regenerate_now(&mut app.rebuild_ctx()); // the cut above built on a worker; the face below is read off its result
+        let body = app.project.timeline.iter().rev().find_map(|n| n.kind.body()).expect("the body");
+        let floor = app.project.regen_faces[&body].iter().filter(|f| f.normal[2] > 0.9 && f.centroid.z < 5.0).max_by(|a, b| a.area.total_cmp(&b.area)).cloned().expect("the inner face of the floor");
+        let si_floor = app.create_sketch_on(qymcad_core::feature::SketchPlane::default());
+        let mut hand = Hand::new(&mut app);
+        hand.sk_tool(3).click2d(24.0, 14.0).click2d(36.0, 14.0); // a circle of diameter 12 inside the floor
+        app.finish_sketch_edit();
+        app.chosen.sel = super::super::Sel::Sketch(si_floor);
+        let mut hand = Hand::new(&mut app);
+        hand.look_at([30.0, 20.0, 12.0], 8.0).tool(1).op(2);
+        assert!(hand.press_word(&qymcad_i18n::tr("cmd-up-to-face"), egui::pos2(0.0, 0.0)), "the extent was switched to a face");
+        hand.click([floor.centroid.x, floor.centroid.y, floor.centroid.z]); // seen through the open top
+        hand.enter();
+        crate::gui::io_jobs::regenerate_now(&mut app.rebuild_ctx()); // the cut built on a worker; the checks below read its body
+        check_all(&mut app, "a cut to a face through the floor", &mut problems);
+        let by_a_face =
+            app.project.timeline.iter().any(|n| matches!(&n.kind, qymcad_core::feature::FeatureKind::Combine { extent, .. } if matches!(extent.stop, qymcad_core::feature::Stop::UpToFace(_))));
+        if !by_a_face {
+            problems.push("[a cut to a face] no operation of the timeline stops by a face".into());
+        }
+        let after_face_cut = app.project.timeline.iter().rev().find_map(|n| n.kind.body()).and_then(|b| app.project.bodies.iter().find(|x| x.id == b)).map(|b| b.mesh.volume()).unwrap_or(0.0);
+        if after_face_cut >= after_cut - 100.0 {
+            problems.push(format!("[a cut to a face] the volume did not decrease: it was {after_cut:.1}, it is {after_face_cut:.1} - the cut to the floor's face took nothing"));
+        }
+
         // --- A PROJECTION OF THE HOUSING'S SIDE: the outline of the side face projected into a sketch on it, by its button
         // and "Face outline", a line drawn from its top corner. The height of the housing is changed below, and the
         // projection and the line tied to it follow ---
